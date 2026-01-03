@@ -1,0 +1,50 @@
+[package]
+name = "cascade-crypt"
+version = "0.1.0"
+edition = "2021"
+description = "Cascading binary encryption with user-controlled algorithm ordering"
+license = "MIT"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Encryption - Block ciphers (RustCrypto ecosystem, cipher 0.4 compatible)
+aes-gcm = "0.10"
+des = "0.8"
+twofish = "0.7"
+serpent = "0.5"
+camellia = "0.1"
+blowfish = "0.9"
+cast5 = "0.11"
+idea = "0.5"
+aria = "0.1"
+sm4 = "0.5"
+kuznyechik = "0.8"
+
+# Encryption - Stream ciphers
+chacha20poly1305 = "0.10"
+
+# Encryption - Common
+cbc = "0.1"
+cipher = { version = "0.4", features = ["alloc"] }
+block-padding = "0.3"
+
+# Key derivation
+argon2 = "0.5"
+
+# Hashing
+sha2 = "0.10"
+
+# Encoding
+base64 = "0.22"
+
+# Random
+rand = "0.8"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Password input
+rpassword = "7"
