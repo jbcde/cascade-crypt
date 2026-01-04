@@ -13,7 +13,7 @@ pub enum CryptoError {
     InvalidNonce,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Algorithm {
     Aes256,            // 'A'
     TripleDes,         // 'T'

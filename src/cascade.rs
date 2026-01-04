@@ -1,5 +1,6 @@
 use argon2::Argon2;
 use rand::RngCore;
+use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::crypto::{self, Algorithm, CryptoError};
@@ -36,14 +37,15 @@ fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm) -> Result<Vec<u8>, 
     Ok(key)
 }
 
-// Core encryption loop with optional progress callback
+// Core encryption loop with key caching and optional progress callback
 fn encrypt_layers<F>(data: &[u8], password: &[u8], algorithms: &[Algorithm], salt: &[u8], mut progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
     let total = algorithms.len();
+    let mut key_cache: HashMap<Algorithm, Vec<u8>> = HashMap::new();
     let mut current = encoder::encode(data).into_bytes();
     for (i, algo) in algorithms.iter().enumerate() {
-        let key = derive_key(password, salt, *algo)?;
-        current = crypto::encrypt(*algo, &key, &current)?;
+        let key = key_cache.entry(*algo).or_insert_with(|| derive_key(password, salt, *algo).unwrap());
+        current = crypto::encrypt(*algo, key, &current)?;
         progress(i + 1, total);
     }
     Ok(current)
@@ -108,10 +110,11 @@ fn decrypt_layers<F>(header: &Header, encrypted_data: &[u8], password: &[u8], mu
 where F: FnMut(usize, usize) {
     if header.algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
     let total = header.algorithms.len();
+    let mut key_cache: HashMap<Algorithm, Vec<u8>> = HashMap::new();
     let mut current = encrypted_data.to_vec();
     for (i, algo) in header.algorithms.iter().rev().enumerate() {
-        let key = derive_key(password, &header.salt, *algo)?;
-        current = crypto::decrypt(*algo, &key, &current)?;
+        let key = key_cache.entry(*algo).or_insert_with(|| derive_key(password, &header.salt, *algo).unwrap());
+        current = crypto::decrypt(*algo, key, &current)?;
         progress(i + 1, total);
     }
     let decoded_str = String::from_utf8(current).map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed("Invalid UTF-8".into())))?;
