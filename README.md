@@ -6,6 +6,8 @@ Cascading binary encryption tool with user-controlled algorithm ordering. Encryp
 
 - **13 symmetric ciphers** - mix and match in any order
 - **Cascading encryption** - algorithms applied sequentially in command-line order
+- **Random mode** - randomly select N algorithms (with duplicates) for unpredictable layering
+- **Silent mode** - suppress all output for operational security
 - **Auto-decryption** - header stores algorithm order, decryption reverses automatically
 - **Argon2id key derivation** - unique keys derived per algorithm layer
 - **SHA-256 integrity** - header hash detects tampering
@@ -20,11 +22,17 @@ cargo build --release
 
 ## Usage
 
-### Encrypt
+### Encrypt (manual algorithm selection)
 ```bash
 cascade-crypt -A -S -C -i secret.bin -o secret.enc -k "password"
 ```
 Encrypts with AES-256 → Serpent → ChaCha20 (in that order).
+
+### Encrypt (random algorithm selection)
+```bash
+cascade-crypt -n 20 -i secret.bin -o secret.enc -k "password"
+```
+Encrypts with 20 randomly selected algorithms (duplicates allowed).
 
 ### Decrypt
 ```bash
@@ -32,9 +40,17 @@ cascade-crypt -d -i secret.enc -o secret.bin -k "password"
 ```
 Algorithm order is read from the file header automatically.
 
+### Silent mode
+```bash
+cascade-crypt -s -n 50 -i secret.bin -o secret.enc -k "password"
+```
+Suppresses all status output (algorithm chain, completion messages).
+
 ### Options
 ```
 -d, --decrypt       Decrypt mode
+-n, --random N      Use N randomly selected algorithms (disables manual flags)
+-s, --silent        Suppress all status output
 -i, --input FILE    Input file (use '-' for stdin)
 -o, --output FILE   Output file (use '-' for stdout)
 -k, --key KEY       Passphrase (prompts if omitted)
@@ -145,6 +161,12 @@ cascade-crypt -A -T -W -S -C -X -M -B -F -I -R -4 -K -i file.bin -o fortress.enc
 # Quick and modern
 cascade-crypt -C -A -i file.bin -o file.enc
 
+# Random 100-layer encryption
+cascade-crypt -n 100 -i file.bin -o file.enc
+
+# Silent random encryption with protected header (maximum OPSEC)
+cascade-crypt -s -n 50 --pubkey recipient.pubkey -i secret.bin -o secret.enc
+
 # Pipe from stdin
 cat secret.txt | cascade-crypt -A -S -i - -o - -k "pass" > encrypted.bin
 
@@ -152,6 +174,9 @@ cat secret.txt | cascade-crypt -A -S -i - -o - -k "pass" > encrypted.bin
 cascade-crypt keygen -o alice.keypair --export-pubkey alice.pubkey
 cascade-crypt -A -C -S -i secret.bin -o secret.enc --pubkey alice.pubkey
 cascade-crypt -d -i secret.enc -o secret.bin --privkey alice.keypair
+
+# Silent decryption
+cascade-crypt -s -d -i secret.enc -o secret.bin -k "password"
 ```
 
 ## Security Notes

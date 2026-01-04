@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use rand::seq::SliceRandom;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -8,6 +9,22 @@ use cascade_crypt::{
     decrypt, decrypt_protected, encrypt, encrypt_protected, Algorithm, HybridKeypair,
     HybridPrivateKey, HybridPublicKey,
 };
+
+const ALL_ALGORITHMS: [Algorithm; 13] = [
+    Algorithm::Aes256,
+    Algorithm::TripleDes,
+    Algorithm::Twofish,
+    Algorithm::Serpent,
+    Algorithm::ChaCha20Poly1305,
+    Algorithm::XChaCha20Poly1305,
+    Algorithm::Camellia,
+    Algorithm::Blowfish,
+    Algorithm::Cast5,
+    Algorithm::Idea,
+    Algorithm::Aria,
+    Algorithm::Sm4,
+    Algorithm::Kuznyechik,
+];
 
 #[derive(Parser, Debug)]
 #[command(name = "cascade-crypt")]
@@ -25,6 +42,14 @@ struct Cli {
     /// Decrypt mode (encryption is default)
     #[arg(short = 'd', long = "decrypt")]
     decrypt: bool,
+
+    /// Use N randomly selected algorithms (with duplicates). Disables individual algorithm flags.
+    #[arg(short = 'n', long = "random")]
+    random_count: Option<usize>,
+
+    /// Silent mode - suppress all status output (for security)
+    #[arg(short = 's', long = "silent")]
+    silent: bool,
 
     // ===== Original algorithms =====
     /// Use AES-256-GCM encryption [code: A]
@@ -140,15 +165,12 @@ fn parse_algorithms_in_order() -> Vec<Algorithm> {
 
     for arg in &args {
         match arg.as_str() {
-            // Original algorithms
             "-A" | "--aes" => algorithms.push(Algorithm::Aes256),
             "-T" | "--3des" => algorithms.push(Algorithm::TripleDes),
             "-W" | "--twofish" => algorithms.push(Algorithm::Twofish),
             "-S" | "--serpent" => algorithms.push(Algorithm::Serpent),
-            // Stream ciphers
             "-C" | "--chacha" => algorithms.push(Algorithm::ChaCha20Poly1305),
             "-X" | "--xchacha" => algorithms.push(Algorithm::XChaCha20Poly1305),
-            // Additional block ciphers
             "-M" | "--camellia" => algorithms.push(Algorithm::Camellia),
             "-B" | "--blowfish" => algorithms.push(Algorithm::Blowfish),
             "-F" | "--cast5" => algorithms.push(Algorithm::Cast5),
@@ -161,6 +183,19 @@ fn parse_algorithms_in_order() -> Vec<Algorithm> {
     }
 
     algorithms
+}
+
+/// Generate N randomly selected algorithms (with duplicates allowed)
+fn generate_random_algorithms(count: usize) -> Vec<Algorithm> {
+    let mut rng = rand::thread_rng();
+    (0..count).map(|_| *ALL_ALGORITHMS.choose(&mut rng).unwrap()).collect()
+}
+
+/// Check if any individual algorithm flags were specified
+fn has_algorithm_flags(cli: &Cli) -> bool {
+    cli.aes || cli.triple_des || cli.twofish || cli.serpent ||
+    cli.chacha || cli.xchacha || cli.camellia || cli.blowfish ||
+    cli.cast5 || cli.idea || cli.aria || cli.sm4 || cli.kuznyechik
 }
 
 fn get_password(cli: &Cli) -> Result<Vec<u8>> {
@@ -303,7 +338,9 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
         if let Some(privkey_path) = &cli.privkey {
             // Protected mode with private key
             let private_key = load_private_key(privkey_path)?;
-            eprintln!("Decrypting with protected header (using private key)...");
+            if !cli.silent {
+                eprintln!("Decrypting with protected header (using private key)...");
+            }
             decrypt_protected(&input_data, &password, &private_key)
                 .context("Decryption failed")?
         } else {
@@ -311,33 +348,53 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             decrypt(&input_data, &password).context("Decryption failed")?
         }
     } else {
-        // Encrypt mode - get algorithms in command-line order
-        let algorithms = parse_algorithms_in_order();
+        // Encrypt mode - get algorithms
+        let algorithms = if let Some(count) = cli.random_count {
+            // Random mode - check for conflicting flags
+            if has_algorithm_flags(&cli) {
+                anyhow::bail!(
+                    "Cannot use -n/--random with individual algorithm flags.\n\
+                    Use either -n <count> OR specific algorithm flags, not both."
+                );
+            }
+            if count == 0 {
+                anyhow::bail!("Random count must be at least 1");
+            }
+            generate_random_algorithms(count)
+        } else {
+            // Manual mode - parse algorithms from command line
+            let algos = parse_algorithms_in_order();
+            if algos.is_empty() {
+                anyhow::bail!(
+                    "No encryption algorithms specified.\n\
+                    Use at least one of:\n\
+                      -A (AES-256)      -T (3DES)         -W (Twofish)      -S (Serpent)\n\
+                      -C (ChaCha20)     -X (XChaCha20)    -M (Camellia)     -B (Blowfish)\n\
+                      -F (CAST5)        -I (IDEA)         -R (ARIA)         -4 (SM4)\n\
+                      -K (Kuznyechik)\n\
+                    Or use -n <count> for random algorithm selection."
+                );
+            }
+            algos
+        };
 
-        if algorithms.is_empty() {
-            anyhow::bail!(
-                "No encryption algorithms specified.\n\
-                Use at least one of:\n\
-                  -A (AES-256)      -T (3DES)         -W (Twofish)      -S (Serpent)\n\
-                  -C (ChaCha20)     -X (XChaCha20)    -M (Camellia)     -B (Blowfish)\n\
-                  -F (CAST5)        -I (IDEA)         -R (ARIA)         -4 (SM4)\n\
-                  -K (Kuznyechik)"
+        if !cli.silent {
+            eprintln!(
+                "Encrypting with: {}",
+                algorithms
+                    .iter()
+                    .map(|a| a.name())
+                    .collect::<Vec<_>>()
+                    .join(" -> ")
             );
         }
-
-        eprintln!(
-            "Encrypting with: {}",
-            algorithms
-                .iter()
-                .map(|a| a.name())
-                .collect::<Vec<_>>()
-                .join(" -> ")
-        );
 
         if let Some(pubkey_path) = &cli.pubkey {
             // Protected mode with public key
             let public_key = load_public_key(pubkey_path)?;
-            eprintln!("Using protected header (hybrid X25519+Kyber encryption)");
+            if !cli.silent {
+                eprintln!("Using protected header (hybrid X25519+Kyber encryption)");
+            }
             encrypt_protected(&input_data, &password, algorithms, &public_key)
                 .context("Encryption failed")?
         } else {
@@ -349,10 +406,12 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
     // Write output
     write_output(output, &output_data)?;
 
-    if cli.decrypt {
-        eprintln!("Decryption complete.");
-    } else {
-        eprintln!("Encryption complete.");
+    if !cli.silent {
+        if cli.decrypt {
+            eprintln!("Decryption complete.");
+        } else {
+            eprintln!("Encryption complete.");
+        }
     }
 
     Ok(())
