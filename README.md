@@ -1,0 +1,175 @@
+# cascade-crypt
+
+Cascading binary encryption tool with user-controlled algorithm ordering. Encrypt files through multiple layers of encryption, applied in the order you specify.
+
+## Features
+
+- **13 symmetric ciphers** - mix and match in any order
+- **Cascading encryption** - algorithms applied sequentially in command-line order
+- **Auto-decryption** - header stores algorithm order, decryption reverses automatically
+- **Argon2id key derivation** - unique keys derived per algorithm layer
+- **SHA-256 integrity** - header hash detects tampering
+- **Hybrid header protection** - optional X25519 + Kyber1024 encryption hides algorithm order
+
+## Installation
+
+```bash
+cargo build --release
+# Binary at ./target/release/cascade-crypt
+```
+
+## Usage
+
+### Encrypt
+```bash
+cascade-crypt -A -S -C -i secret.bin -o secret.enc -k "password"
+```
+Encrypts with AES-256 → Serpent → ChaCha20 (in that order).
+
+### Decrypt
+```bash
+cascade-crypt -d -i secret.enc -o secret.bin -k "password"
+```
+Algorithm order is read from the file header automatically.
+
+### Options
+```
+-d, --decrypt       Decrypt mode
+-i, --input FILE    Input file (use '-' for stdin)
+-o, --output FILE   Output file (use '-' for stdout)
+-k, --key KEY       Passphrase (prompts if omitted)
+    --keyfile FILE  Read key from file
+    --pubkey FILE   Recipient's public key for header protection (encrypt)
+    --privkey FILE  Private key for protected headers (decrypt)
+```
+
+## Algorithms
+
+| Flag | Code | Algorithm | Block/Stream |
+|------|------|-----------|--------------|
+| `-A` | A | AES-256-GCM | Block (AEAD) |
+| `-T` | T | 3DES-CBC | Block |
+| `-W` | W | Twofish-256-CBC | Block |
+| `-S` | S | Serpent-256-CBC | Block |
+| `-C` | C | ChaCha20-Poly1305 | Stream (AEAD) |
+| `-X` | X | XChaCha20-Poly1305 | Stream (AEAD) |
+| `-M` | M | Camellia-256-CBC | Block |
+| `-B` | B | Blowfish-256-CBC | Block |
+| `-F` | F | CAST5-CBC | Block |
+| `-I` | I | IDEA-CBC | Block |
+| `-R` | R | ARIA-256-CBC | Block |
+| `-4` | 4 | SM4-CBC | Block |
+| `-K` | K | Kuznyechik-CBC | Block |
+
+## Hybrid Header Protection
+
+By default, the header exposes which algorithms were used (though not the password or keys). For maximum security, you can encrypt the header itself using hybrid asymmetric encryption.
+
+### Why?
+
+With a plaintext header, an attacker knows they need to break AES → Serpent → ChaCha20. With an encrypted header, they don't even know which of the 6+ billion possible algorithm combinations to attack.
+
+### Key Generation
+
+Generate a hybrid keypair (X25519 + Kyber1024):
+
+```bash
+# Generate keypair and export public key
+cascade-crypt keygen -o my.keypair --export-pubkey my.pubkey
+
+# Or export public key later
+cascade-crypt export-pubkey -i my.keypair -o my.pubkey
+```
+
+The keypair combines:
+- **X25519**: Classical elliptic curve Diffie-Hellman (256-bit security)
+- **Kyber1024**: Post-quantum lattice-based KEM (NIST Level 5, quantum-resistant)
+
+### Protected Encryption
+
+Encrypt with a protected header using the recipient's public key:
+
+```bash
+cascade-crypt -A -S -C -i secret.bin -o secret.enc -k "password" --pubkey recipient.pubkey
+```
+
+The algorithm order and salt are now encrypted. An attacker sees only:
+```
+[CCRYPT|2|E|<encrypted_keys>|<encrypted_metadata>|<hash>]
+```
+
+### Protected Decryption
+
+Decrypt using your private key (full keypair file):
+
+```bash
+cascade-crypt -d -i secret.enc -o secret.bin -k "password" --privkey my.keypair
+```
+
+Without the private key, decryption fails:
+```
+Error: Encrypted header requires private key
+```
+
+## File Format
+
+### Version 1 (Plaintext Header)
+```
+[CCRYPT|1|ASCX|<salt_hex>|<sha256>]
+<encrypted payload>
+```
+
+- **Version**: 1
+- **Algorithm codes**: Letters indicating encryption order (visible)
+- **Salt**: 32-byte random salt (hex encoded)
+- **SHA-256**: Hash of algorithm codes + salt
+
+### Version 2 (Encrypted Header)
+```
+[CCRYPT|2|E|<encapsulated_keys_b64>|<encrypted_payload_b64>|<sha256>]
+<encrypted payload>
+```
+
+- **Version**: 2
+- **E**: Marker for encrypted header
+- **Encapsulated keys**: X25519 ephemeral public key + Kyber ciphertext (base64)
+- **Encrypted payload**: Algorithm codes + salt encrypted with ChaCha20-Poly1305 (base64)
+- **SHA-256**: Hash of encrypted components
+
+## Examples
+
+```bash
+# Maximum paranoia - all 13 ciphers
+cascade-crypt -A -T -W -S -C -X -M -B -F -I -R -4 -K -i file.bin -o fortress.enc
+
+# Quick and modern
+cascade-crypt -C -A -i file.bin -o file.enc
+
+# Pipe from stdin
+cat secret.txt | cascade-crypt -A -S -i - -o - -k "pass" > encrypted.bin
+
+# Protected header workflow
+cascade-crypt keygen -o alice.keypair --export-pubkey alice.pubkey
+cascade-crypt -A -C -S -i secret.bin -o secret.enc --pubkey alice.pubkey
+cascade-crypt -d -i secret.enc -o secret.bin --privkey alice.keypair
+```
+
+## Security Notes
+
+- **13! = 6,227,020,800** possible algorithm orderings
+- **Argon2id** derives unique 256-bit keys per algorithm from master password
+- **Random salt** ensures identical files encrypt differently
+- **AEAD ciphers** (AES-GCM, ChaCha20-Poly1305, XChaCha20-Poly1305) provide authentication
+- **Hybrid encryption** combines classical and post-quantum security for header protection
+
+## Performance
+
+Tested on 1MB file through all 13 ciphers:
+- Encryption: ~1.4s
+- Decryption: ~1.5s
+
+Bottlenecks: Argon2id key derivation (13 iterations) and 3DES.
+
+## License
+
+MIT

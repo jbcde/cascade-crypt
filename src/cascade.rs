@@ -5,6 +5,7 @@ use thiserror::Error;
 use crate::crypto::{create_cipher, Algorithm, CryptoError};
 use crate::encoder;
 use crate::header::{Header, HeaderError};
+use crate::hybrid::{HybridPrivateKey, HybridPublicKey};
 
 #[derive(Error, Debug)]
 pub enum CascadeError {
@@ -18,6 +19,8 @@ pub enum CascadeError {
     Base64(#[from] base64::DecodeError),
     #[error("No algorithms specified")]
     NoAlgorithms,
+    #[error("Encrypted header requires private key")]
+    PrivateKeyRequired,
 }
 
 /// Derive a key for a specific algorithm from the master password
@@ -39,7 +42,7 @@ fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm) -> Result<Vec<u8>, 
     Ok(key)
 }
 
-/// Encrypt data with cascading algorithms
+/// Encrypt data with cascading algorithms (plaintext header)
 pub fn encrypt(
     data: &[u8],
     password: &[u8],
@@ -74,11 +77,79 @@ pub fn encrypt(
     Ok(result)
 }
 
-/// Decrypt data by reversing the cascade
+/// Encrypt data with cascading algorithms (encrypted header with hybrid crypto)
+pub fn encrypt_protected(
+    data: &[u8],
+    password: &[u8],
+    algorithms: Vec<Algorithm>,
+    recipient_public: &HybridPublicKey,
+) -> Result<Vec<u8>, CascadeError> {
+    if algorithms.is_empty() {
+        return Err(CascadeError::NoAlgorithms);
+    }
+
+    // Generate random master salt
+    let mut salt = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut salt);
+
+    // Encode binary to base64 first
+    let encoded = encoder::encode(data);
+    let mut current_data = encoded.into_bytes();
+
+    // Apply each cipher in order
+    for algo in &algorithms {
+        let key = derive_key(password, &salt, *algo)?;
+        let cipher = create_cipher(*algo);
+        current_data = cipher.encrypt(&key, &current_data)?;
+    }
+
+    // Create header with encrypted metadata
+    let header = Header::new(algorithms, salt);
+    let encrypted_header = header.serialize_encrypted(recipient_public)?;
+
+    // Combine header and encrypted data
+    let mut result = encrypted_header.into_bytes();
+    result.extend(current_data);
+
+    Ok(result)
+}
+
+/// Decrypt data by reversing the cascade (auto-detect header type)
 pub fn decrypt(data: &[u8], password: &[u8]) -> Result<Vec<u8>, CascadeError> {
-    // Parse header to get algorithm order and salt
+    // Check if header is encrypted
+    if Header::is_encrypted(data) {
+        return Err(CascadeError::PrivateKeyRequired);
+    }
+
+    // Parse plaintext header to get algorithm order and salt
     let (header, encrypted_data) = Header::parse(data)?;
 
+    decrypt_with_header(&header, encrypted_data, password)
+}
+
+/// Decrypt data with encrypted header (requires private key)
+pub fn decrypt_protected(
+    data: &[u8],
+    password: &[u8],
+    private_key: &HybridPrivateKey,
+) -> Result<Vec<u8>, CascadeError> {
+    // Parse encrypted header
+    let (header, encrypted_data) = if Header::is_encrypted(data) {
+        Header::parse_encrypted(data, private_key)?
+    } else {
+        // Fall back to plaintext header if not encrypted
+        Header::parse(data)?
+    };
+
+    decrypt_with_header(&header, encrypted_data, password)
+}
+
+/// Internal decrypt function that works with a parsed header
+fn decrypt_with_header(
+    header: &Header,
+    encrypted_data: &[u8],
+    password: &[u8],
+) -> Result<Vec<u8>, CascadeError> {
     if header.algorithms.is_empty() {
         return Err(CascadeError::NoAlgorithms);
     }
@@ -106,6 +177,7 @@ pub fn decrypt(data: &[u8], password: &[u8]) -> Result<Vec<u8>, CascadeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hybrid::HybridKeypair;
 
     #[test]
     fn test_single_algorithm() {
@@ -165,5 +237,46 @@ mod tests {
         let result = decrypt(&encrypted, wrong_password);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_protected_encrypt_decrypt() {
+        let data = b"Secret data with protected header";
+        let password = b"test-password";
+        let keypair = HybridKeypair::generate();
+
+        let encrypted = encrypt_protected(
+            data,
+            password,
+            vec![Algorithm::Aes256, Algorithm::ChaCha20Poly1305],
+            &keypair.public,
+        )
+        .unwrap();
+
+        // Verify header is encrypted
+        assert!(Header::is_encrypted(&encrypted));
+
+        // Decrypt with private key
+        let decrypted = decrypt_protected(&encrypted, password, &keypair.private).unwrap();
+        assert_eq!(data.as_slice(), decrypted.as_slice());
+    }
+
+    #[test]
+    fn test_protected_requires_private_key() {
+        let data = b"Secret data";
+        let password = b"test-password";
+        let keypair = HybridKeypair::generate();
+
+        let encrypted = encrypt_protected(
+            data,
+            password,
+            vec![Algorithm::Aes256],
+            &keypair.public,
+        )
+        .unwrap();
+
+        // Trying to decrypt without private key should fail
+        let result = decrypt(&encrypted, password);
+        assert!(matches!(result, Err(CascadeError::PrivateKeyRequired)));
     }
 }
