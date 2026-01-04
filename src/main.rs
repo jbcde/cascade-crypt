@@ -333,11 +333,9 @@ fn create_progress_bar(total: u64, msg: &str) -> ProgressBar {
     // Nerdfont: 󰌆 = nf-md-lock, 󰦝 = nf-md-shield_lock
     // Using smooth Unicode blocks: ━ (filled), ╾ (current), ─ (empty)
     let template = if msg.contains("Decrypt") {
-        // Decrypting: unlock icon 󰌊
-        "{spinner:.green} {msg:.bold.green} │{bar:40.green/dim}│ {pos}/{len} 󰁔 {eta}"
+        "{spinner:.green} {msg:.bold.green} │{bar:40.green/dim}│ {pos}/{len} 󱎫 {elapsed}"
     } else {
-        // Encrypting: lock icon 󰌆
-        "{spinner:.cyan} {msg:.bold.cyan} │{bar:40.cyan/dim}│ {pos}/{len} 󰁔 {eta}"
+        "{spinner:.cyan} {msg:.bold.cyan} │{bar:40.cyan/dim}│ {pos}/{len} 󱎫 {elapsed}"
     };
     pb.set_style(ProgressStyle::with_template(template)
         .unwrap()
