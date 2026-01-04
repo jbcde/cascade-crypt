@@ -59,16 +59,16 @@ fn encrypt_layers<F>(data: &[u8], password: &[u8], algorithms: &[Algorithm], sal
 where F: FnMut(usize, usize) {
     let total = algorithms.len();
     let mut key_cache: HashMap<Algorithm, Zeroizing<Vec<u8>>> = HashMap::new();
-    let mut current = encoder::encode(data).into_bytes();
+    let mut current = Zeroizing::new(encoder::encode(data).into_bytes());
     for (i, algo) in algorithms.iter().enumerate() {
         let key = match key_cache.entry(*algo) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => e.insert(derive_key(password, salt, *algo)?),
         };
-        current = crypto::encrypt(*algo, key, &current)?;
+        current = Zeroizing::new(crypto::encrypt(*algo, key, &current)?);
         progress(i + 1, total);
     }
-    Ok(current)
+    Ok(current.to_vec())
 }
 
 pub fn encrypt(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>) -> Result<Vec<u8>, CascadeError> {
@@ -133,16 +133,16 @@ where F: FnMut(usize, usize) {
     if header.algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
     let total = header.algorithms.len();
     let mut key_cache: HashMap<Algorithm, Zeroizing<Vec<u8>>> = HashMap::new();
-    let mut current = encrypted_data.to_vec();
+    let mut current = Zeroizing::new(encrypted_data.to_vec());
     for (i, algo) in header.algorithms.iter().rev().enumerate() {
         let key = match key_cache.entry(*algo) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => e.insert(derive_key(password, header.salt.as_slice(), *algo)?),
         };
-        current = crypto::decrypt(*algo, key, &current)?;
+        current = Zeroizing::new(crypto::decrypt(*algo, key, &current)?);
         progress(i + 1, total);
     }
-    let decoded_str = String::from_utf8(current).map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed("Invalid UTF-8".into())))?;
+    let decoded_str = Zeroizing::new(String::from_utf8(current.to_vec()).map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed("Invalid UTF-8".into())))?);
     Ok(encoder::decode(&decoded_str)?)
 }
 

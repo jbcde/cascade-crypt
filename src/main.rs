@@ -5,6 +5,7 @@ use rand::seq::SliceRandom;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use zeroize::Zeroizing;
 
 use cascade_crypt::{
     decrypt, decrypt_protected, decrypt_protected_with_progress, decrypt_with_progress,
@@ -254,15 +255,15 @@ fn has_algorithm_flags(cli: &Cli) -> bool {
     cli.gift || cli.ascon
 }
 
-fn get_password(cli: &Cli) -> Result<Vec<u8>> {
+fn get_password(cli: &Cli) -> Result<Zeroizing<Vec<u8>>> {
     // Priority: keyfile > key argument > interactive prompt
     if let Some(keyfile) = &cli.keyfile {
         let key = fs::read(keyfile).context("Failed to read keyfile")?;
-        return Ok(key);
+        return Ok(Zeroizing::new(key));
     }
 
     if let Some(key) = &cli.key {
-        return Ok(key.as_bytes().to_vec());
+        return Ok(Zeroizing::new(key.as_bytes().to_vec()));
     }
 
     // Interactive prompt
@@ -282,18 +283,19 @@ fn get_password(cli: &Cli) -> Result<Vec<u8>> {
         }
     }
 
-    Ok(password.into_bytes())
+    Ok(Zeroizing::new(password.into_bytes()))
 }
 
-fn read_input(path: &Path) -> Result<Vec<u8>> {
+fn read_input(path: &Path) -> Result<Zeroizing<Vec<u8>>> {
     if path.as_os_str() == "-" {
         let mut data = Vec::new();
         io::stdin()
             .read_to_end(&mut data)
             .context("Failed to read from stdin")?;
-        Ok(data)
+        Ok(Zeroizing::new(data))
     } else {
-        fs::read(path).with_context(|| format!("Failed to read input file: {}", path.display()))
+        let data = fs::read(path).with_context(|| format!("Failed to read input file: {}", path.display()))?;
+        Ok(Zeroizing::new(data))
     }
 }
 
