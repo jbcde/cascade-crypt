@@ -58,3 +58,6 @@ anyhow = "1.0"
 
 # Password input
 rpassword = "7"
+
+# Progress bar
+indicatif = "0.17"

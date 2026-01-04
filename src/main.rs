@@ -1,13 +1,15 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use indicatif::{ProgressBar, ProgressStyle};
 use rand::seq::SliceRandom;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
 use cascade_crypt::{
-    decrypt, decrypt_protected, encrypt, encrypt_protected, Algorithm, HybridKeypair,
-    HybridPrivateKey, HybridPublicKey,
+    decrypt, decrypt_protected, decrypt_protected_with_progress, decrypt_with_progress,
+    encrypt, encrypt_protected, encrypt_protected_with_progress, encrypt_with_progress,
+    Algorithm, HybridKeypair, HybridPrivateKey, HybridPublicKey,
 };
 
 const ALL_ALGORITHMS: [Algorithm; 13] = [
@@ -50,6 +52,10 @@ struct Cli {
     /// Silent mode - suppress all status output (for security)
     #[arg(short = 's', long = "silent")]
     silent: bool,
+
+    /// Show progress bar during encryption/decryption
+    #[arg(long = "progress")]
+    progress: bool,
 
     // ===== Original algorithms =====
     /// Use AES-256-GCM encryption [code: A]
@@ -270,6 +276,15 @@ fn load_private_key(path: &PathBuf) -> Result<HybridPrivateKey> {
     HybridPrivateKey::from_json(&json).context("Failed to parse private key")
 }
 
+fn create_progress_bar(total: u64, msg: &str) -> ProgressBar {
+    let pb = ProgressBar::new(total);
+    pb.set_style(ProgressStyle::with_template("{msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+        .unwrap()
+        .progress_chars("##-"));
+    pb.set_message(msg.to_string());
+    pb
+}
+
 fn cmd_keygen(output: PathBuf, export_pubkey: Option<PathBuf>) -> Result<()> {
     eprintln!("Generating hybrid X25519 + Kyber1024 keypair...");
 
@@ -333,19 +348,34 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
     // Get password
     let password = get_password(&cli)?;
 
+    let show_progress = cli.progress && !cli.silent;
+
     let output_data = if cli.decrypt {
         // Decrypt mode - algorithm order is in the header
         if let Some(privkey_path) = &cli.privkey {
-            // Protected mode with private key
             let private_key = load_private_key(privkey_path)?;
-            if !cli.silent {
-                eprintln!("Decrypting with protected header (using private key)...");
+            if !cli.silent { eprintln!("Decrypting with protected header..."); }
+            if show_progress {
+                let pb = create_progress_bar(100, "Decrypting");
+                let result = decrypt_protected_with_progress(&input_data, &password, &private_key, |cur, total| {
+                    pb.set_length(total as u64); pb.set_position(cur as u64);
+                }).context("Decryption failed")?;
+                pb.finish();
+                result
+            } else {
+                decrypt_protected(&input_data, &password, &private_key).context("Decryption failed")?
             }
-            decrypt_protected(&input_data, &password, &private_key)
-                .context("Decryption failed")?
         } else {
-            // Standard decryption
-            decrypt(&input_data, &password).context("Decryption failed")?
+            if show_progress {
+                let pb = create_progress_bar(100, "Decrypting");
+                let result = decrypt_with_progress(&input_data, &password, |cur, total| {
+                    pb.set_length(total as u64); pb.set_position(cur as u64);
+                }).context("Decryption failed")?;
+                pb.finish();
+                result
+            } else {
+                decrypt(&input_data, &password).context("Decryption failed")?
+            }
         }
     } else {
         // Encrypt mode - get algorithms
@@ -378,28 +408,42 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             algos
         };
 
+        let algo_count = algorithms.len();
         if !cli.silent {
             eprintln!(
-                "Encrypting with: {}",
-                algorithms
-                    .iter()
-                    .map(|a| a.name())
-                    .collect::<Vec<_>>()
-                    .join(" -> ")
+                "Encrypting with {} algorithm{}{}",
+                algo_count,
+                if algo_count == 1 { "" } else { "s" },
+                if algo_count <= 5 {
+                    format!(": {}", algorithms.iter().map(|a| a.name()).collect::<Vec<_>>().join(" -> "))
+                } else { String::new() }
             );
         }
 
         if let Some(pubkey_path) = &cli.pubkey {
-            // Protected mode with public key
             let public_key = load_public_key(pubkey_path)?;
-            if !cli.silent {
-                eprintln!("Using protected header (hybrid X25519+Kyber encryption)");
+            if !cli.silent { eprintln!("Using protected header (hybrid X25519+Kyber encryption)"); }
+            if show_progress {
+                let pb = create_progress_bar(algo_count as u64, "Encrypting");
+                let result = encrypt_protected_with_progress(&input_data, &password, algorithms, &public_key, |cur, total| {
+                    pb.set_length(total as u64); pb.set_position(cur as u64);
+                }).context("Encryption failed")?;
+                pb.finish();
+                result
+            } else {
+                encrypt_protected(&input_data, &password, algorithms, &public_key).context("Encryption failed")?
             }
-            encrypt_protected(&input_data, &password, algorithms, &public_key)
-                .context("Encryption failed")?
         } else {
-            // Standard encryption
-            encrypt(&input_data, &password, algorithms).context("Encryption failed")?
+            if show_progress {
+                let pb = create_progress_bar(algo_count as u64, "Encrypting");
+                let result = encrypt_with_progress(&input_data, &password, algorithms, |cur, total| {
+                    pb.set_length(total as u64); pb.set_position(cur as u64);
+                }).context("Encryption failed")?;
+                pb.finish();
+                result
+            } else {
+                encrypt(&input_data, &password, algorithms).context("Encryption failed")?
+            }
         }
     };
 

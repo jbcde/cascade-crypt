@@ -8,6 +8,7 @@ Cascading binary encryption tool with user-controlled algorithm ordering. Encryp
 - **Cascading encryption** - algorithms applied sequentially in command-line order
 - **Random mode** - randomly select N algorithms (with duplicates) for unpredictable layering
 - **Silent mode** - suppress all output for operational security
+- **Progress bar** - optional visual feedback for long operations (`--progress`)
 - **Auto-decryption** - header stores algorithm order, decryption reverses automatically
 - **Argon2id key derivation** - unique keys derived per algorithm layer
 - **SHA-256 integrity** - header hash detects tampering
@@ -51,6 +52,7 @@ Suppresses all status output (algorithm chain, completion messages).
 -d, --decrypt       Decrypt mode
 -n, --random N      Use N randomly selected algorithms (disables manual flags)
 -s, --silent        Suppress all status output
+    --progress      Show progress bar for long operations
 -i, --input FILE    Input file (use '-' for stdin)
 -o, --output FILE   Output file (use '-' for stdout)
 -k, --key KEY       Passphrase (prompts if omitted)
@@ -161,8 +163,8 @@ cascade-crypt -A -T -W -S -C -X -M -B -F -I -R -4 -K -i file.bin -o fortress.enc
 # Quick and modern
 cascade-crypt -C -A -i file.bin -o file.enc
 
-# Random 100-layer encryption
-cascade-crypt -n 100 -i file.bin -o file.enc
+# Random 100-layer encryption with progress bar
+cascade-crypt --progress -n 100 -i file.bin -o file.enc
 
 # Silent random encryption with protected header (maximum OPSEC)
 cascade-crypt -s -n 50 --pubkey recipient.pubkey -i secret.bin -o secret.enc
