@@ -28,6 +28,13 @@ kisaseed = "0.1"
 # Legacy cipher crates (need custom wrappers)
 threefish-cipher = "0.4"          # cipher 0.2 - custom impl
 
+# New ciphers (cipher 0.5 - need custom implementations)
+rc6 = "0.1.0-rc.2"
+magma = "0.10.0-rc.2"
+speck-cipher = "0.1.0-rc.2"
+gift-cipher = "0.1.0-rc.2"
+ascon-aead = "0.6.0-pre.2"
+
 # Encryption - Stream ciphers
 chacha20poly1305 = "0.10"
 
