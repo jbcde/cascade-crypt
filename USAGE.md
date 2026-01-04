@@ -39,6 +39,8 @@ OPTIONS:
     -R, --aria                  ARIA-256-CBC [code: R]
     -4, --sm4                   SM4-CBC [code: 4]
     -K, --kuznyechik            Kuznyechik-CBC [code: K]
+    -E, --seed                  SEED-CBC [code: E]
+    -3, --threefish             Threefish-256-CBC [code: 3]
 
     -i, --input <FILE>          Input file (use '-' for stdin)
     -o, --output <FILE>         Output file (use '-' for stdout)
@@ -75,7 +77,7 @@ cascade-crypt -A -S -A -S -A -i file.bin -o file.enc
 
 ### Random Algorithm Selection
 
-Use `-n` to randomly select N algorithms from all 13 available:
+Use `-n` to randomly select N algorithms from all 15 available:
 
 ```bash
 # 10 random layers
@@ -89,7 +91,7 @@ cascade-crypt -n 1000 -i file.bin -o file.enc
 ```
 
 The `-n` flag:
-- Selects from all 13 algorithms randomly
+- Selects from all 15 algorithms randomly
 - Allows duplicates (same algorithm can appear multiple times)
 - Has no upper limit
 - Cannot be combined with manual algorithm flags
@@ -274,6 +276,8 @@ cat secret.txt | cascade-crypt -A -i - -o - -k "pass" | base64
 | `-R` | R | ARIA-256-CBC | Block | 256-bit |
 | `-4` | 4 | SM4-CBC | Block | 128-bit |
 | `-K` | K | Kuznyechik-CBC | Block | 256-bit |
+| `-E` | E | SEED-CBC | Block | 128-bit |
+| `-3` | 3 | Threefish-256-CBC | Block | 256-bit |
 
 **AEAD** = Authenticated Encryption with Associated Data (provides integrity)
 **Block** = CBC mode with PKCS7 padding
@@ -296,8 +300,8 @@ cascade-crypt -d -i secret.enc -o secret.txt
 # 4 algorithms
 cascade-crypt -A -T -W -S -i data.bin -o data.enc
 
-# All 13 algorithms
-cascade-crypt -A -T -W -S -C -X -M -B -F -I -R -4 -K -i data.bin -o fortress.enc
+# All 15 algorithms
+cascade-crypt -A -T -W -S -C -X -M -B -F -I -R -4 -K -E -3 -i data.bin -o fortress.enc
 ```
 
 ### Random Encryption
@@ -371,7 +375,7 @@ done
 - Argon2id key derivation runs once per algorithm layer
 - For large files with many layers, expect linear slowdown
 
-Approximate timing (1MB file):
+Approximate timing on Intel Xeon E-2176M @ 2.70GHz (1MB file):
 - 1 algorithm: ~0.1s
-- 13 algorithms: ~1.4s
+- 15 algorithms: ~1.5s
 - 100 algorithms: ~11s
