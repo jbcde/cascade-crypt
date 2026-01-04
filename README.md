@@ -63,27 +63,27 @@ Suppresses all status output (algorithm chain, completion messages).
 
 ### Progress Bar & Status Icons
 
-When using `--progress` or viewing status output, [Nerd Font](https://www.nerdfonts.com/) glyphs provide visual feedback:
+When using `--progress` or viewing status output, the terminal displays status icons. These require a [Nerd Font](https://www.nerdfonts.com/) to render correctly.
 
-| Codepoint | Name | Meaning |
-|-----------|------|---------|
-| `U+F0306` | `nf-md-lock` | Encrypting |
-| `U+F030A` | `nf-md-lock_open` | Decrypting |
-| `U+F099D` | `nf-md-shield_lock` | Protected header (hybrid encryption) |
-| `U+F033E` | `nf-md-lock_alert` | Keep private / puzzle lock enabled |
-| `U+F1C45` | `nf-md-puzzle` | Puzzle lock feature active |
-| `U+F0054` | `nf-md-clock` | ETA (time remaining) |
-| `U+F0BC4` | `nf-md-key_chain` | Keypair information |
-| `U+F0E67` | `nf-md-key_variant` | X25519 classical key |
-| `U+F1C67` | `nf-md-key_wireless` | Kyber1024 post-quantum key |
-| `U+F044D` | `nf-md-share_variant` | Share (public key) |
+| Emoji | Nerd Font | Meaning |
+|-------|-----------|---------|
+| 🔒 | `nf-md-lock` | Encrypting / Generating keypair |
+| 🔓 | `nf-md-lock_open` | Decrypting |
+| 🛡️ | `nf-md-shield_lock` | Protected header active |
+| 🔐 | `nf-md-lock_alert` | Keep keypair private / Puzzle lock mode |
+| 🧩 | `nf-md-puzzle` | Puzzle lock feature |
+| ⏱️ | `nf-md-clock` | ETA (time remaining) |
+| 🔗 | `nf-md-key_chain` | Keypair contents |
+| 🔷 | `nf-md-key_variant` | X25519 classical key |
+| 🔶 | `nf-md-key_wireless` | Kyber1024 post-quantum key |
+| 📤 | `nf-md-share_variant` | Share public key |
 
-Progress bar example (as seen in a Nerd Font terminal):
+Progress bar example:
 ```
-⠋ [lock] Encrypting │━━━━━━━━━━╾─────────────│ 7/20 [clock] 2s
+⠋ 🔒 Encrypting │━━━━━━━━━━╾─────────────│ 7/20 ⏱️ 2s
 ```
 
-**Note:** These glyphs require a [Nerd Font](https://www.nerdfonts.com/) installed and configured in your terminal. Without one, you'll see placeholder boxes—functionality is unaffected.
+**Note:** Without a Nerd Font installed, you may see placeholder boxes instead of icons—functionality is unaffected.
 
 ## Algorithms
 
