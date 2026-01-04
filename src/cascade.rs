@@ -1,7 +1,8 @@
 use argon2::Argon2;
 use rand::RngCore;
-use std::collections::hash_map::Entry;
+use rayon::prelude::*;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
@@ -56,17 +57,27 @@ fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm) -> Result<Zeroizing
     Ok(key)
 }
 
+/// Derive keys for all unique algorithms in parallel
+fn derive_keys_parallel(
+    password: &[u8],
+    salt: &[u8],
+    algorithms: &[Algorithm],
+) -> Result<HashMap<Algorithm, Zeroizing<Vec<u8>>>, CascadeError> {
+    let unique: HashSet<Algorithm> = algorithms.iter().copied().collect();
+    unique
+        .into_par_iter()
+        .map(|algo| derive_key(password, salt, algo).map(|key| (algo, key)))
+        .collect()
+}
+
 fn encrypt_layers<F>(data: &[u8], password: &[u8], algorithms: &[Algorithm], salt: &[u8], locked: bool, mut progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
     let total = algorithms.len();
-    let mut key_cache: HashMap<Algorithm, Zeroizing<Vec<u8>>> = HashMap::new();
+    let keys = derive_keys_parallel(password, salt, algorithms)?;
     let encoded = encoder::encode(data).into_bytes();
     let mut current = Zeroizing::new(if locked { _t::_x(&encoded) } else { encoded });
     for (i, algo) in algorithms.iter().enumerate() {
-        let key = match key_cache.entry(*algo) {
-            Entry::Occupied(e) => e.into_mut(),
-            Entry::Vacant(e) => e.insert(derive_key(password, salt, *algo)?),
-        };
+        let key = &keys[algo];
         current = Zeroizing::new(crypto::encrypt(*algo, key, &current)?);
         progress(i + 1, total);
     }
@@ -132,13 +143,10 @@ fn decrypt_layers<F>(header: &Header, encrypted_data: &[u8], password: &[u8], mu
 where F: FnMut(usize, usize) {
     if header.algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
     let total = header.algorithms.len();
-    let mut key_cache: HashMap<Algorithm, Zeroizing<Vec<u8>>> = HashMap::new();
+    let keys = derive_keys_parallel(password, &header.salt, &header.algorithms)?;
     let mut current = Zeroizing::new(encrypted_data.to_vec());
     for (i, algo) in header.algorithms.iter().rev().enumerate() {
-        let key = match key_cache.entry(*algo) {
-            Entry::Occupied(e) => e.into_mut(),
-            Entry::Vacant(e) => e.insert(derive_key(password, header.salt.as_slice(), *algo)?),
-        };
+        let key = &keys[algo];
         current = Zeroizing::new(crypto::decrypt(*algo, key, &current)?);
         progress(i + 1, total);
     }
