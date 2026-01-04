@@ -41,6 +41,11 @@ OPTIONS:
     -K, --kuznyechik            Kuznyechik-CBC [code: K]
     -E, --seed                  SEED-CBC [code: E]
     -3, --threefish             Threefish-256-CBC [code: 3]
+    -6, --rc6                   RC6-CBC [code: 6]
+    -G, --magma                 Magma-CBC (GOST) [code: G]
+    -P, --speck                 Speck128/256-CBC [code: P]
+    -J, --gift                  GIFT-128-CBC [code: J]
+    -N, --ascon                 Ascon-128 [code: N]
 
     -i, --input <FILE>          Input file (use '-' for stdin)
     -o, --output <FILE>         Output file (use '-' for stdout)
@@ -77,7 +82,7 @@ cascade-crypt -A -S -A -S -A -i file.bin -o file.enc
 
 ### Random Algorithm Selection
 
-Use `-n` to randomly select N algorithms from all 15 available:
+Use `-n` to randomly select N algorithms from all 20 available:
 
 ```bash
 # 10 random layers
@@ -91,7 +96,7 @@ cascade-crypt -n 1000 -i file.bin -o file.enc
 ```
 
 The `-n` flag:
-- Selects from all 15 algorithms randomly
+- Selects from all 20 algorithms randomly
 - Allows duplicates (same algorithm can appear multiple times)
 - Has no upper limit
 - Cannot be combined with manual algorithm flags
@@ -278,6 +283,11 @@ cat secret.txt | cascade-crypt -A -i - -o - -k "pass" | base64
 | `-K` | K | Kuznyechik-CBC | Block | 256-bit |
 | `-E` | E | SEED-CBC | Block | 128-bit |
 | `-3` | 3 | Threefish-256-CBC | Block | 256-bit |
+| `-6` | 6 | RC6-CBC | Block | 128-bit |
+| `-G` | G | Magma-CBC (GOST) | Block | 256-bit |
+| `-P` | P | Speck128/256-CBC | Block | 256-bit |
+| `-J` | J | GIFT-128-CBC | Block | 128-bit |
+| `-N` | N | Ascon-128 | AEAD | 128-bit |
 
 **AEAD** = Authenticated Encryption with Associated Data (provides integrity)
 **Block** = CBC mode with PKCS7 padding
@@ -300,8 +310,8 @@ cascade-crypt -d -i secret.enc -o secret.txt
 # 4 algorithms
 cascade-crypt -A -T -W -S -i data.bin -o data.enc
 
-# All 15 algorithms
-cascade-crypt -A -T -W -S -C -X -M -B -F -I -R -4 -K -E -3 -i data.bin -o fortress.enc
+# All 20 algorithms
+cascade-crypt -A -T -W -S -C -X -M -B -F -I -R -4 -K -E -3 -6 -G -P -J -N -i data.bin -o fortress.enc
 ```
 
 ### Random Encryption
@@ -377,5 +387,5 @@ done
 
 Approximate timing on Intel Xeon E-2176M @ 2.70GHz (1MB file):
 - 1 algorithm: ~0.1s
-- 15 algorithms: ~1.5s
+- 20 algorithms: ~1.8s
 - 100 algorithms: ~11s

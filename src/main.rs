@@ -12,7 +12,7 @@ use cascade_crypt::{
     Algorithm, HybridKeypair, HybridPrivateKey, HybridPublicKey,
 };
 
-const ALL_ALGORITHMS: [Algorithm; 15] = [
+const ALL_ALGORITHMS: [Algorithm; 20] = [
     Algorithm::Aes256,
     Algorithm::TripleDes,
     Algorithm::Twofish,
@@ -28,6 +28,11 @@ const ALL_ALGORITHMS: [Algorithm; 15] = [
     Algorithm::Kuznyechik,
     Algorithm::Seed,
     Algorithm::Threefish256,
+    Algorithm::Rc6,
+    Algorithm::Magma,
+    Algorithm::Speck128_256,
+    Algorithm::Gift128,
+    Algorithm::Ascon128,
 ];
 
 #[derive(Parser, Debug)]
@@ -37,7 +42,8 @@ const ALL_ALGORITHMS: [Algorithm; 15] = [
     Encryption algorithms are applied in the order specified on the command line.\n\
     Use -d to decrypt (algorithm order is auto-detected from file header).\n\n\
     Algorithm codes: A=AES, T=3DES, W=Twofish, S=Serpent, C=ChaCha20, X=XChaCha20,\n\
-    M=Camellia, B=Blowfish, F=CAST5, I=IDEA, R=ARIA, 4=SM4, K=Kuznyechik, E=SEED, 3=Threefish\n\n\
+    M=Camellia, B=Blowfish, F=CAST5, I=IDEA, R=ARIA, 4=SM4, K=Kuznyechik, E=SEED, 3=Threefish,\n\
+    6=RC6, G=Magma, P=Speck, J=GIFT, N=Ascon\n\n\
     Use 'keygen' subcommand to generate hybrid X25519+Kyber keypairs for header protection.")]
 struct Cli {
     #[command(subcommand)]
@@ -122,6 +128,27 @@ struct Cli {
     #[arg(short = '3', long = "threefish")]
     threefish: bool,
 
+    // ===== cipher 0.5 ciphers =====
+    /// Use RC6 encryption (AES finalist) [code: 6]
+    #[arg(short = '6', long = "rc6")]
+    rc6: bool,
+
+    /// Use Magma encryption (Russian GOST 28147-89) [code: G]
+    #[arg(short = 'G', long = "magma")]
+    magma: bool,
+
+    /// Use Speck128/256 encryption (NSA lightweight) [code: P]
+    #[arg(short = 'P', long = "speck")]
+    speck: bool,
+
+    /// Use GIFT-128 encryption (lightweight cipher) [code: J]
+    #[arg(short = 'J', long = "gift")]
+    gift: bool,
+
+    /// Use Ascon-128 encryption (NIST 2023 winner) [code: N]
+    #[arg(short = 'N', long = "ascon")]
+    ascon: bool,
+
     // ===== I/O options =====
     /// Input file (use '-' for stdin)
     #[arg(short = 'i', long = "input")]
@@ -196,6 +223,11 @@ fn parse_algorithms_in_order() -> Vec<Algorithm> {
             "-K" | "--kuznyechik" => algorithms.push(Algorithm::Kuznyechik),
             "-E" | "--seed" => algorithms.push(Algorithm::Seed),
             "-3" | "--threefish" => algorithms.push(Algorithm::Threefish256),
+            "-6" | "--rc6" => algorithms.push(Algorithm::Rc6),
+            "-G" | "--magma" => algorithms.push(Algorithm::Magma),
+            "-P" | "--speck" => algorithms.push(Algorithm::Speck128_256),
+            "-J" | "--gift" => algorithms.push(Algorithm::Gift128),
+            "-N" | "--ascon" => algorithms.push(Algorithm::Ascon128),
             _ => {}
         }
     }
@@ -214,7 +246,8 @@ fn has_algorithm_flags(cli: &Cli) -> bool {
     cli.aes || cli.triple_des || cli.twofish || cli.serpent ||
     cli.chacha || cli.xchacha || cli.camellia || cli.blowfish ||
     cli.cast5 || cli.idea || cli.aria || cli.sm4 || cli.kuznyechik ||
-    cli.seed || cli.threefish
+    cli.seed || cli.threefish || cli.rc6 || cli.magma || cli.speck ||
+    cli.gift || cli.ascon
 }
 
 fn get_password(cli: &Cli) -> Result<Vec<u8>> {
@@ -414,7 +447,8 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
                       -A (AES-256)      -T (3DES)         -W (Twofish)      -S (Serpent)\n\
                       -C (ChaCha20)     -X (XChaCha20)    -M (Camellia)     -B (Blowfish)\n\
                       -F (CAST5)        -I (IDEA)         -R (ARIA)         -4 (SM4)\n\
-                      -K (Kuznyechik)   -E (SEED)         -3 (Threefish)\n\
+                      -K (Kuznyechik)   -E (SEED)         -3 (Threefish)    -6 (RC6)\n\
+                      -G (Magma)        -P (Speck)        -J (GIFT)         -N (Ascon)\n\
                     Or use -n <count> for random algorithm selection."
                 );
             }

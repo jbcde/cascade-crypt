@@ -30,6 +30,11 @@ pub enum Algorithm {
     Kuznyechik,        // 'K'
     Seed,              // 'E' (Korean standard)
     Threefish256,      // '3' (Schneier's cipher)
+    Rc6,               // '6' (AES finalist)
+    Magma,             // 'G' (Russian GOST 28147-89)
+    Speck128_256,      // 'P' (NSA lightweight)
+    Gift128,           // 'J' (Lightweight cipher)
+    Ascon128,          // 'N' (NIST 2023 winner)
 }
 
 impl Algorithm {
@@ -49,6 +54,11 @@ impl Algorithm {
         (Algorithm::Kuznyechik, 'K', "Kuznyechik-CBC", 32, b"cascade-kuznyechik"),
         (Algorithm::Seed, 'E', "SEED-CBC", 16, b"cascade-seed"),
         (Algorithm::Threefish256, '3', "Threefish-256-CBC", 32, b"cascade-threefish"),
+        (Algorithm::Rc6, '6', "RC6-CBC", 16, b"cascade-rc6"),
+        (Algorithm::Magma, 'G', "Magma-CBC", 32, b"cascade-magma"),
+        (Algorithm::Speck128_256, 'P', "Speck128/256-CBC", 32, b"cascade-speck"),
+        (Algorithm::Gift128, 'J', "GIFT-128-CBC", 16, b"cascade-gift"),
+        (Algorithm::Ascon128, 'N', "Ascon-128", 16, b"cascade-ascon"),
     ];
 
     fn data(&self) -> (char, &'static str, usize, &'static [u8]) {
@@ -164,6 +174,244 @@ macro_rules! aead_impl {
     }};
 }
 
+// Custom implementations for cipher 0.5 block ciphers - each uses its own re-exported cipher module
+fn rc6_encrypt(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use magma::cipher::{KeyInit, BlockCipherEncrypt};
+    const KEY_LEN: usize = 16;
+    const BLOCK_SIZE: usize = 16;
+    if key.len() != KEY_LEN { return Err(CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() }); }
+    let cipher = rc6::RC6_32_20_16::new_from_slice(key).map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
+    let mut iv = [0u8; BLOCK_SIZE];
+    rand::thread_rng().fill_bytes(&mut iv);
+    let padding_len = BLOCK_SIZE - (plaintext.len() % BLOCK_SIZE);
+    let mut buffer = vec![padding_len as u8; plaintext.len() + padding_len];
+    buffer[..plaintext.len()].copy_from_slice(plaintext);
+    let mut prev = iv;
+    for chunk in buffer.chunks_mut(BLOCK_SIZE) {
+        for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
+        let mut block = (*<&[u8; BLOCK_SIZE]>::try_from(&chunk[..]).unwrap()).into();
+        cipher.encrypt_block(&mut block);
+        chunk.copy_from_slice(&block);
+        prev.copy_from_slice(chunk);
+    }
+    let mut result = Vec::with_capacity(BLOCK_SIZE + buffer.len());
+    result.extend_from_slice(&iv);
+    result.extend(buffer);
+    Ok(result)
+}
+
+fn rc6_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use magma::cipher::{KeyInit, BlockCipherDecrypt};
+    const KEY_LEN: usize = 16;
+    const BLOCK_SIZE: usize = 16;
+    if key.len() != KEY_LEN { return Err(CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() }); }
+    if ciphertext.len() < BLOCK_SIZE { return Err(CryptoError::InvalidNonce); }
+    let cipher = rc6::RC6_32_20_16::new_from_slice(key).map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
+    let (iv, data) = ciphertext.split_at(BLOCK_SIZE);
+    let mut buffer = data.to_vec();
+    let mut prev = [0u8; BLOCK_SIZE];
+    prev.copy_from_slice(iv);
+    for chunk in buffer.chunks_mut(BLOCK_SIZE) {
+        let ct: Vec<u8> = chunk.to_vec();
+        let mut block = (*<&[u8; BLOCK_SIZE]>::try_from(&chunk[..]).unwrap()).into();
+        cipher.decrypt_block(&mut block);
+        chunk.copy_from_slice(&block);
+        for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
+        prev.copy_from_slice(&ct);
+    }
+    let padding_len = *buffer.last().ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))? as usize;
+    if padding_len == 0 || padding_len > BLOCK_SIZE || padding_len > buffer.len() || !buffer[buffer.len() - padding_len..].iter().all(|&b| b == padding_len as u8) {
+        return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
+    }
+    buffer.truncate(buffer.len() - padding_len);
+    Ok(buffer)
+}
+
+fn magma_encrypt(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use magma::cipher::{KeyInit, BlockCipherEncrypt};
+    const KEY_LEN: usize = 32;
+    const BLOCK_SIZE: usize = 8;
+    if key.len() != KEY_LEN { return Err(CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() }); }
+    let cipher = magma::Magma::new_from_slice(key).map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
+    let mut iv = [0u8; BLOCK_SIZE];
+    rand::thread_rng().fill_bytes(&mut iv);
+    let padding_len = BLOCK_SIZE - (plaintext.len() % BLOCK_SIZE);
+    let mut buffer = vec![padding_len as u8; plaintext.len() + padding_len];
+    buffer[..plaintext.len()].copy_from_slice(plaintext);
+    let mut prev = iv;
+    for chunk in buffer.chunks_mut(BLOCK_SIZE) {
+        for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
+        let mut block = (*<&[u8; BLOCK_SIZE]>::try_from(&chunk[..]).unwrap()).into();
+        cipher.encrypt_block(&mut block);
+        chunk.copy_from_slice(&block);
+        prev.copy_from_slice(chunk);
+    }
+    let mut result = Vec::with_capacity(BLOCK_SIZE + buffer.len());
+    result.extend_from_slice(&iv);
+    result.extend(buffer);
+    Ok(result)
+}
+
+fn magma_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use magma::cipher::{KeyInit, BlockCipherDecrypt};
+    const KEY_LEN: usize = 32;
+    const BLOCK_SIZE: usize = 8;
+    if key.len() != KEY_LEN { return Err(CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() }); }
+    if ciphertext.len() < BLOCK_SIZE { return Err(CryptoError::InvalidNonce); }
+    let cipher = magma::Magma::new_from_slice(key).map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
+    let (iv, data) = ciphertext.split_at(BLOCK_SIZE);
+    let mut buffer = data.to_vec();
+    let mut prev = [0u8; BLOCK_SIZE];
+    prev.copy_from_slice(iv);
+    for chunk in buffer.chunks_mut(BLOCK_SIZE) {
+        let ct: Vec<u8> = chunk.to_vec();
+        let mut block = (*<&[u8; BLOCK_SIZE]>::try_from(&chunk[..]).unwrap()).into();
+        cipher.decrypt_block(&mut block);
+        chunk.copy_from_slice(&block);
+        for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
+        prev.copy_from_slice(&ct);
+    }
+    let padding_len = *buffer.last().ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))? as usize;
+    if padding_len == 0 || padding_len > BLOCK_SIZE || padding_len > buffer.len() || !buffer[buffer.len() - padding_len..].iter().all(|&b| b == padding_len as u8) {
+        return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
+    }
+    buffer.truncate(buffer.len() - padding_len);
+    Ok(buffer)
+}
+
+fn speck_encrypt(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use magma::cipher::{KeyInit, BlockCipherEncrypt};
+    const KEY_LEN: usize = 32;
+    const BLOCK_SIZE: usize = 16;
+    if key.len() != KEY_LEN { return Err(CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() }); }
+    let cipher = speck_cipher::Speck128_256::new_from_slice(key).map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
+    let mut iv = [0u8; BLOCK_SIZE];
+    rand::thread_rng().fill_bytes(&mut iv);
+    let padding_len = BLOCK_SIZE - (plaintext.len() % BLOCK_SIZE);
+    let mut buffer = vec![padding_len as u8; plaintext.len() + padding_len];
+    buffer[..plaintext.len()].copy_from_slice(plaintext);
+    let mut prev = iv;
+    for chunk in buffer.chunks_mut(BLOCK_SIZE) {
+        for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
+        let mut block = (*<&[u8; BLOCK_SIZE]>::try_from(&chunk[..]).unwrap()).into();
+        cipher.encrypt_block(&mut block);
+        chunk.copy_from_slice(&block);
+        prev.copy_from_slice(chunk);
+    }
+    let mut result = Vec::with_capacity(BLOCK_SIZE + buffer.len());
+    result.extend_from_slice(&iv);
+    result.extend(buffer);
+    Ok(result)
+}
+
+fn speck_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use magma::cipher::{KeyInit, BlockCipherDecrypt};
+    const KEY_LEN: usize = 32;
+    const BLOCK_SIZE: usize = 16;
+    if key.len() != KEY_LEN { return Err(CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() }); }
+    if ciphertext.len() < BLOCK_SIZE { return Err(CryptoError::InvalidNonce); }
+    let cipher = speck_cipher::Speck128_256::new_from_slice(key).map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
+    let (iv, data) = ciphertext.split_at(BLOCK_SIZE);
+    let mut buffer = data.to_vec();
+    let mut prev = [0u8; BLOCK_SIZE];
+    prev.copy_from_slice(iv);
+    for chunk in buffer.chunks_mut(BLOCK_SIZE) {
+        let ct: Vec<u8> = chunk.to_vec();
+        let mut block = (*<&[u8; BLOCK_SIZE]>::try_from(&chunk[..]).unwrap()).into();
+        cipher.decrypt_block(&mut block);
+        chunk.copy_from_slice(&block);
+        for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
+        prev.copy_from_slice(&ct);
+    }
+    let padding_len = *buffer.last().ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))? as usize;
+    if padding_len == 0 || padding_len > BLOCK_SIZE || padding_len > buffer.len() || !buffer[buffer.len() - padding_len..].iter().all(|&b| b == padding_len as u8) {
+        return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
+    }
+    buffer.truncate(buffer.len() - padding_len);
+    Ok(buffer)
+}
+
+fn gift_encrypt(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use magma::cipher::{KeyInit, BlockCipherEncrypt};
+    const KEY_LEN: usize = 16;
+    const BLOCK_SIZE: usize = 16;
+    if key.len() != KEY_LEN { return Err(CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() }); }
+    let cipher = gift_cipher::Gift128::new_from_slice(key).map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
+    let mut iv = [0u8; BLOCK_SIZE];
+    rand::thread_rng().fill_bytes(&mut iv);
+    let padding_len = BLOCK_SIZE - (plaintext.len() % BLOCK_SIZE);
+    let mut buffer = vec![padding_len as u8; plaintext.len() + padding_len];
+    buffer[..plaintext.len()].copy_from_slice(plaintext);
+    let mut prev = iv;
+    for chunk in buffer.chunks_mut(BLOCK_SIZE) {
+        for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
+        let mut block = (*<&[u8; BLOCK_SIZE]>::try_from(&chunk[..]).unwrap()).into();
+        cipher.encrypt_block(&mut block);
+        chunk.copy_from_slice(&block);
+        prev.copy_from_slice(chunk);
+    }
+    let mut result = Vec::with_capacity(BLOCK_SIZE + buffer.len());
+    result.extend_from_slice(&iv);
+    result.extend(buffer);
+    Ok(result)
+}
+
+fn gift_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use magma::cipher::{KeyInit, BlockCipherDecrypt};
+    const KEY_LEN: usize = 16;
+    const BLOCK_SIZE: usize = 16;
+    if key.len() != KEY_LEN { return Err(CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() }); }
+    if ciphertext.len() < BLOCK_SIZE { return Err(CryptoError::InvalidNonce); }
+    let cipher = gift_cipher::Gift128::new_from_slice(key).map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
+    let (iv, data) = ciphertext.split_at(BLOCK_SIZE);
+    let mut buffer = data.to_vec();
+    let mut prev = [0u8; BLOCK_SIZE];
+    prev.copy_from_slice(iv);
+    for chunk in buffer.chunks_mut(BLOCK_SIZE) {
+        let ct: Vec<u8> = chunk.to_vec();
+        let mut block = (*<&[u8; BLOCK_SIZE]>::try_from(&chunk[..]).unwrap()).into();
+        cipher.decrypt_block(&mut block);
+        chunk.copy_from_slice(&block);
+        for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
+        prev.copy_from_slice(&ct);
+    }
+    let padding_len = *buffer.last().ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))? as usize;
+    if padding_len == 0 || padding_len > BLOCK_SIZE || padding_len > buffer.len() || !buffer[buffer.len() - padding_len..].iter().all(|&b| b == padding_len as u8) {
+        return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
+    }
+    buffer.truncate(buffer.len() - padding_len);
+    Ok(buffer)
+}
+
+fn ascon_encrypt(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use ascon_aead::{AsconAead128, aead::{Aead, KeyInit}};
+    const KEY_LEN: usize = 16;
+    const NONCE_SIZE: usize = 16;
+    if key.len() != KEY_LEN { return Err(CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() }); }
+    let key_arr: [u8; KEY_LEN] = key.try_into().unwrap();
+    let cipher = AsconAead128::new(&key_arr.into());
+    let mut nonce = [0u8; NONCE_SIZE];
+    rand::thread_rng().fill_bytes(&mut nonce);
+    let ct = cipher.encrypt(&nonce.into(), plaintext).map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
+    let mut result = Vec::with_capacity(NONCE_SIZE + ct.len());
+    result.extend_from_slice(&nonce);
+    result.extend(ct);
+    Ok(result)
+}
+
+fn ascon_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    use ascon_aead::{AsconAead128, aead::{Aead, KeyInit}};
+    const KEY_LEN: usize = 16;
+    const NONCE_SIZE: usize = 16;
+    if key.len() != KEY_LEN { return Err(CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() }); }
+    if ciphertext.len() < NONCE_SIZE { return Err(CryptoError::InvalidNonce); }
+    let key_arr: [u8; KEY_LEN] = key.try_into().unwrap();
+    let cipher = AsconAead128::new(&key_arr.into());
+    let (nonce, data) = ciphertext.split_at(NONCE_SIZE);
+    let nonce_arr: [u8; NONCE_SIZE] = nonce.try_into().unwrap();
+    cipher.decrypt(&nonce_arr.into(), data).map_err(|e| CryptoError::DecryptionFailed(e.to_string()))
+}
+
 // Custom implementation for Threefish256 (uses cipher 0.2 API)
 macro_rules! threefish_impl {
     () => {{
@@ -266,6 +514,11 @@ fn get_cipher_fns(algo: Algorithm) -> (fn(&[u8], &[u8]) -> Result<Vec<u8>, Crypt
         Algorithm::Kuznyechik => cbc_impl!(kuznyechik::Kuznyechik, 32, 16, 16),
         Algorithm::Seed => cbc_impl!(kisaseed::SEED, 16, 16, 16),
         Algorithm::Threefish256 => threefish_impl!(),
+        Algorithm::Rc6 => (rc6_encrypt, rc6_decrypt),
+        Algorithm::Magma => (magma_encrypt, magma_decrypt),
+        Algorithm::Speck128_256 => (speck_encrypt, speck_decrypt),
+        Algorithm::Gift128 => (gift_encrypt, gift_decrypt),
+        Algorithm::Ascon128 => (ascon_encrypt, ascon_decrypt),
     }
 }
 
@@ -296,6 +549,11 @@ mod tests {
     #[test] fn test_kuznyechik() { test_roundtrip(Algorithm::Kuznyechik); }
     #[test] fn test_seed() { test_roundtrip(Algorithm::Seed); }
     #[test] fn test_threefish256() { test_roundtrip(Algorithm::Threefish256); }
+    #[test] fn test_rc6() { test_roundtrip(Algorithm::Rc6); }
+    #[test] fn test_magma() { test_roundtrip(Algorithm::Magma); }
+    #[test] fn test_speck128_256() { test_roundtrip(Algorithm::Speck128_256); }
+    #[test] fn test_gift128() { test_roundtrip(Algorithm::Gift128); }
+    #[test] fn test_ascon128() { test_roundtrip(Algorithm::Ascon128); }
 
     #[test]
     fn test_different_nonces() {
