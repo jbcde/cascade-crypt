@@ -24,6 +24,7 @@ OPTIONS:
     -d, --decrypt               Decrypt mode (default is encrypt)
     -n, --random <COUNT>        Use N randomly selected algorithms
     -s, --silent                Suppress all status output
+        --progress              Show progress bar during encryption/decryption
 
     -A, --aes                   AES-256-GCM [code: A]
     -T, --3des                  Triple-DES-CBC [code: T]
@@ -143,6 +144,29 @@ Silent mode prevents shoulder-surfing and log capture of algorithm order:
 # Maximum OPSEC: silent + random + protected header
 cascade-crypt -s -n 50 --pubkey recipient.pub -i secret.bin -o secret.enc
 ```
+
+## Progress Bar
+
+Use `--progress` to display a progress bar during long encryption/decryption operations:
+
+```bash
+# Encrypt with progress bar
+cascade-crypt --progress -n 100 -i file.bin -o file.enc -k "pass"
+# Output: Encrypting with 100 algorithms
+#         Encrypting [########################################] 100/100 (0s)
+#         Encryption complete.
+
+# Decrypt with progress bar
+cascade-crypt --progress -d -i file.enc -o file.dec -k "pass"
+```
+
+The progress bar:
+- Shows current layer and total layers
+- Displays estimated time remaining
+- Is disabled by default (opt-in with `--progress`)
+- Is suppressed in silent mode (`-s` overrides `--progress`)
+
+Useful for operations with many algorithm layers where you want visual feedback.
 
 ## Protected Headers (Hybrid Encryption)
 
@@ -285,8 +309,8 @@ cascade-crypt -n 5 -i file.bin -o file.enc
 # Heavy random (50 layers)
 cascade-crypt -n 50 -i file.bin -o file.enc
 
-# Extreme (500 layers)
-cascade-crypt -n 500 -i file.bin -o file.enc
+# Extreme (500 layers) with progress bar
+cascade-crypt --progress -n 500 -i file.bin -o file.enc
 ```
 
 ### Secure Workflow

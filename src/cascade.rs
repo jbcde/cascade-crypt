@@ -36,94 +36,85 @@ fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm) -> Result<Vec<u8>, 
     Ok(key)
 }
 
-pub fn encrypt(
-    data: &[u8],
-    password: &[u8],
-    algorithms: Vec<Algorithm>,
-) -> Result<Vec<u8>, CascadeError> {
-    if algorithms.is_empty() {
-        return Err(CascadeError::NoAlgorithms);
+// Core encryption loop with optional progress callback
+fn encrypt_layers<F>(data: &[u8], password: &[u8], algorithms: &[Algorithm], salt: &[u8], mut progress: F) -> Result<Vec<u8>, CascadeError>
+where F: FnMut(usize, usize) {
+    let total = algorithms.len();
+    let mut current = encoder::encode(data).into_bytes();
+    for (i, algo) in algorithms.iter().enumerate() {
+        let key = derive_key(password, salt, *algo)?;
+        current = crypto::encrypt(*algo, &key, &current)?;
+        progress(i + 1, total);
     }
+    Ok(current)
+}
 
+pub fn encrypt(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>) -> Result<Vec<u8>, CascadeError> {
+    encrypt_with_progress(data, password, algorithms, |_, _| {})
+}
+
+pub fn encrypt_with_progress<F>(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, progress: F) -> Result<Vec<u8>, CascadeError>
+where F: FnMut(usize, usize) {
+    if algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
     let mut salt = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut salt);
-
-    let mut current = encoder::encode(data).into_bytes();
-    for algo in &algorithms {
-        let key = derive_key(password, &salt, *algo)?;
-        current = crypto::encrypt(*algo, &key, &current)?;
-    }
-
+    let encrypted = encrypt_layers(data, password, &algorithms, &salt, progress)?;
     let mut result = Header::new(algorithms, salt).serialize().into_bytes();
-    result.extend(current);
+    result.extend(encrypted);
     Ok(result)
 }
 
-pub fn encrypt_protected(
-    data: &[u8],
-    password: &[u8],
-    algorithms: Vec<Algorithm>,
-    recipient_public: &HybridPublicKey,
-) -> Result<Vec<u8>, CascadeError> {
-    if algorithms.is_empty() {
-        return Err(CascadeError::NoAlgorithms);
-    }
+pub fn encrypt_protected(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, recipient_public: &HybridPublicKey) -> Result<Vec<u8>, CascadeError> {
+    encrypt_protected_with_progress(data, password, algorithms, recipient_public, |_, _| {})
+}
 
+pub fn encrypt_protected_with_progress<F>(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, recipient_public: &HybridPublicKey, progress: F) -> Result<Vec<u8>, CascadeError>
+where F: FnMut(usize, usize) {
+    if algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
     let mut salt = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut salt);
-
-    let mut current = encoder::encode(data).into_bytes();
-    for algo in &algorithms {
-        let key = derive_key(password, &salt, *algo)?;
-        current = crypto::encrypt(*algo, &key, &current)?;
-    }
-
-    let mut result = Header::new(algorithms, salt)
-        .serialize_encrypted(recipient_public)?
-        .into_bytes();
-    result.extend(current);
+    let encrypted = encrypt_layers(data, password, &algorithms, &salt, progress)?;
+    let mut result = Header::new(algorithms, salt).serialize_encrypted(recipient_public)?.into_bytes();
+    result.extend(encrypted);
     Ok(result)
 }
 
 pub fn decrypt(data: &[u8], password: &[u8]) -> Result<Vec<u8>, CascadeError> {
-    if Header::is_encrypted(data) {
-        return Err(CascadeError::PrivateKeyRequired);
-    }
-    let (header, encrypted_data) = Header::parse(data)?;
-    decrypt_with_header(&header, encrypted_data, password)
+    decrypt_with_progress(data, password, |_, _| {})
 }
 
-pub fn decrypt_protected(
-    data: &[u8],
-    password: &[u8],
-    private_key: &HybridPrivateKey,
-) -> Result<Vec<u8>, CascadeError> {
+pub fn decrypt_with_progress<F>(data: &[u8], password: &[u8], progress: F) -> Result<Vec<u8>, CascadeError>
+where F: FnMut(usize, usize) {
+    if Header::is_encrypted(data) { return Err(CascadeError::PrivateKeyRequired); }
+    let (header, encrypted_data) = Header::parse(data)?;
+    decrypt_layers(&header, encrypted_data, password, progress)
+}
+
+pub fn decrypt_protected(data: &[u8], password: &[u8], private_key: &HybridPrivateKey) -> Result<Vec<u8>, CascadeError> {
+    decrypt_protected_with_progress(data, password, private_key, |_, _| {})
+}
+
+pub fn decrypt_protected_with_progress<F>(data: &[u8], password: &[u8], private_key: &HybridPrivateKey, progress: F) -> Result<Vec<u8>, CascadeError>
+where F: FnMut(usize, usize) {
     let (header, encrypted_data) = if Header::is_encrypted(data) {
         Header::parse_encrypted(data, private_key)?
     } else {
         Header::parse(data)?
     };
-    decrypt_with_header(&header, encrypted_data, password)
+    decrypt_layers(&header, encrypted_data, password, progress)
 }
 
-fn decrypt_with_header(
-    header: &Header,
-    encrypted_data: &[u8],
-    password: &[u8],
-) -> Result<Vec<u8>, CascadeError> {
-    if header.algorithms.is_empty() {
-        return Err(CascadeError::NoAlgorithms);
-    }
-
+fn decrypt_layers<F>(header: &Header, encrypted_data: &[u8], password: &[u8], mut progress: F) -> Result<Vec<u8>, CascadeError>
+where F: FnMut(usize, usize) {
+    if header.algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
+    let total = header.algorithms.len();
     let mut current = encrypted_data.to_vec();
-    for algo in header.algorithms.iter().rev() {
+    for (i, algo) in header.algorithms.iter().rev().enumerate() {
         let key = derive_key(password, &header.salt, *algo)?;
         current = crypto::decrypt(*algo, &key, &current)?;
+        progress(i + 1, total);
     }
-
-    let decoded_str = String::from_utf8(current).map_err(|_| {
-        CascadeError::Crypto(CryptoError::DecryptionFailed("Invalid UTF-8".into()))
-    })?;
+    let decoded_str = String::from_utf8(current).map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed("Invalid UTF-8".into())))?;
     Ok(encoder::decode(&decoded_str)?)
 }
 
