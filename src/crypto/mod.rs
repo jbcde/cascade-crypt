@@ -1,6 +1,9 @@
 use rand::RngCore;
 use thiserror::Error;
 
+/// Type alias for cipher encrypt/decrypt function pointers
+pub type CipherFn = fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>;
+
 #[derive(Error, Debug)]
 pub enum CryptoError {
     #[error("Encryption failed: {0}")]
@@ -129,8 +132,7 @@ macro_rules! cbc_impl {
             Ok(buffer)
         }
 
-        (enc as fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>,
-         dec as fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>)
+        (enc as CipherFn, dec as CipherFn)
     }};
 }
 
@@ -169,8 +171,7 @@ macro_rules! aead_impl {
                 .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))
         }
 
-        (enc as fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>,
-         dec as fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>)
+        (enc as CipherFn, dec as CipherFn)
     }};
 }
 
@@ -226,8 +227,7 @@ macro_rules! cipher05_cbc_impl {
             Ok(buffer)
         }
 
-        (enc as fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>,
-         dec as fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>)
+        (enc as CipherFn, dec as CipherFn)
     }};
 }
 
@@ -235,8 +235,8 @@ fn ascon_encrypt(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
     use ascon_aead::{AsconAead128, aead::{Aead, KeyInit}};
     const KEY_LEN: usize = 16;
     const NONCE_SIZE: usize = 16;
-    if key.len() != KEY_LEN { return Err(CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() }); }
-    let key_arr: [u8; KEY_LEN] = key.try_into().unwrap();
+    let key_arr: [u8; KEY_LEN] = key.try_into()
+        .map_err(|_| CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() })?;
     let cipher = AsconAead128::new(&key_arr.into());
     let mut nonce = [0u8; NONCE_SIZE];
     rand::thread_rng().fill_bytes(&mut nonce);
@@ -251,12 +251,13 @@ fn ascon_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> 
     use ascon_aead::{AsconAead128, aead::{Aead, KeyInit}};
     const KEY_LEN: usize = 16;
     const NONCE_SIZE: usize = 16;
-    if key.len() != KEY_LEN { return Err(CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() }); }
     if ciphertext.len() < NONCE_SIZE { return Err(CryptoError::InvalidNonce); }
-    let key_arr: [u8; KEY_LEN] = key.try_into().unwrap();
+    let key_arr: [u8; KEY_LEN] = key.try_into()
+        .map_err(|_| CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() })?;
     let cipher = AsconAead128::new(&key_arr.into());
     let (nonce, data) = ciphertext.split_at(NONCE_SIZE);
-    let nonce_arr: [u8; NONCE_SIZE] = nonce.try_into().unwrap();
+    let nonce_arr: [u8; NONCE_SIZE] = nonce.try_into()
+        .map_err(|_| CryptoError::InvalidNonce)?;
     cipher.decrypt(&nonce_arr.into(), data).map_err(|e| CryptoError::DecryptionFailed(e.to_string()))
 }
 
@@ -314,8 +315,7 @@ macro_rules! threefish_impl {
             Ok(buffer)
         }
 
-        (enc as fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>,
-         dec as fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>)
+        (enc as CipherFn, dec as CipherFn)
     }};
 }
 
@@ -329,7 +329,7 @@ pub fn decrypt(algo: Algorithm, key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>
     dec(key, ciphertext)
 }
 
-fn get_cipher_fns(algo: Algorithm) -> (fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>, fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>) {
+fn get_cipher_fns(algo: Algorithm) -> (CipherFn, CipherFn) {
     match algo {
         Algorithm::Aes256 => aead_impl!(aes_gcm::Aes256Gcm, 12),
         Algorithm::ChaCha20Poly1305 => aead_impl!(chacha20poly1305::ChaCha20Poly1305, 12),
