@@ -7,6 +7,17 @@ use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
+fn init_thread_pool() {
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    let threads = (cores / 2).max(1);
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(threads)
+        .build_global()
+        .ok();
+}
+
 use cascade_crypt::{
     decrypt, decrypt_protected, decrypt_protected_with_progress, decrypt_with_progress,
     encrypt, encrypt_protected, encrypt_protected_with_progress, encrypt_with_progress,
@@ -530,6 +541,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    init_thread_pool();
     let cli = Cli::parse();
 
     match &cli.command {
