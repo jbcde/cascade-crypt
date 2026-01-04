@@ -41,41 +41,126 @@ pub enum Algorithm {
 }
 
 impl Algorithm {
-    const DATA: &'static [(Algorithm, char, &'static str, usize, &'static [u8])] = &[
-        (Algorithm::Aes256, 'A', "AES-256-GCM", 32, b"cascade-aes256"),
-        (Algorithm::TripleDes, 'T', "3DES-CBC", 24, b"cascade-3des"),
-        (Algorithm::Twofish, 'W', "Twofish-256-CBC", 32, b"cascade-twofish"),
-        (Algorithm::Serpent, 'S', "Serpent-256-CBC", 32, b"cascade-serpent"),
-        (Algorithm::ChaCha20Poly1305, 'C', "ChaCha20-Poly1305", 32, b"cascade-chacha20"),
-        (Algorithm::XChaCha20Poly1305, 'X', "XChaCha20-Poly1305", 32, b"cascade-xchacha20"),
-        (Algorithm::Camellia, 'M', "Camellia-256-CBC", 32, b"cascade-camellia"),
-        (Algorithm::Blowfish, 'B', "Blowfish-256-CBC", 32, b"cascade-blowfish"),
-        (Algorithm::Cast5, 'F', "CAST5-CBC", 16, b"cascade-cast5"),
-        (Algorithm::Idea, 'I', "IDEA-CBC", 16, b"cascade-idea"),
-        (Algorithm::Aria, 'R', "ARIA-256-CBC", 32, b"cascade-aria"),
-        (Algorithm::Sm4, '4', "SM4-CBC", 16, b"cascade-sm4"),
-        (Algorithm::Kuznyechik, 'K', "Kuznyechik-CBC", 32, b"cascade-kuznyechik"),
-        (Algorithm::Seed, 'E', "SEED-CBC", 16, b"cascade-seed"),
-        (Algorithm::Threefish256, '3', "Threefish-256-CBC", 32, b"cascade-threefish"),
-        (Algorithm::Rc6, '6', "RC6-CBC", 16, b"cascade-rc6"),
-        (Algorithm::Magma, 'G', "Magma-CBC", 32, b"cascade-magma"),
-        (Algorithm::Speck128_256, 'P', "Speck128/256-CBC", 32, b"cascade-speck"),
-        (Algorithm::Gift128, 'J', "GIFT-128-CBC", 16, b"cascade-gift"),
-        (Algorithm::Ascon128, 'N', "Ascon-128", 16, b"cascade-ascon"),
-    ];
-
-    fn data(&self) -> (char, &'static str, usize, &'static [u8]) {
-        let (_, c, n, k, s) = Self::DATA.iter().find(|(a, _, _, _, _)| a == self).unwrap();
-        (*c, *n, *k, *s)
+    #[inline]
+    #[must_use]
+    pub const fn code(&self) -> char {
+        match self {
+            Self::Aes256 => 'A',
+            Self::TripleDes => 'T',
+            Self::Twofish => 'W',
+            Self::Serpent => 'S',
+            Self::ChaCha20Poly1305 => 'C',
+            Self::XChaCha20Poly1305 => 'X',
+            Self::Camellia => 'M',
+            Self::Blowfish => 'B',
+            Self::Cast5 => 'F',
+            Self::Idea => 'I',
+            Self::Aria => 'R',
+            Self::Sm4 => '4',
+            Self::Kuznyechik => 'K',
+            Self::Seed => 'E',
+            Self::Threefish256 => '3',
+            Self::Rc6 => '6',
+            Self::Magma => 'G',
+            Self::Speck128_256 => 'P',
+            Self::Gift128 => 'J',
+            Self::Ascon128 => 'N',
+        }
     }
 
-    pub fn code(&self) -> char { self.data().0 }
-    pub fn name(&self) -> &'static str { self.data().1 }
-    pub fn key_size(&self) -> usize { self.data().2 }
-    pub fn salt_context(&self) -> &'static [u8] { self.data().3 }
+    #[inline]
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::Aes256 => "AES-256-GCM",
+            Self::TripleDes => "3DES-CBC",
+            Self::Twofish => "Twofish-256-CBC",
+            Self::Serpent => "Serpent-256-CBC",
+            Self::ChaCha20Poly1305 => "ChaCha20-Poly1305",
+            Self::XChaCha20Poly1305 => "XChaCha20-Poly1305",
+            Self::Camellia => "Camellia-256-CBC",
+            Self::Blowfish => "Blowfish-256-CBC",
+            Self::Cast5 => "CAST5-CBC",
+            Self::Idea => "IDEA-CBC",
+            Self::Aria => "ARIA-256-CBC",
+            Self::Sm4 => "SM4-CBC",
+            Self::Kuznyechik => "Kuznyechik-CBC",
+            Self::Seed => "SEED-CBC",
+            Self::Threefish256 => "Threefish-256-CBC",
+            Self::Rc6 => "RC6-CBC",
+            Self::Magma => "Magma-CBC",
+            Self::Speck128_256 => "Speck128/256-CBC",
+            Self::Gift128 => "GIFT-128-CBC",
+            Self::Ascon128 => "Ascon-128",
+        }
+    }
 
-    pub fn from_code(c: char) -> Option<Algorithm> {
-        Self::DATA.iter().find(|(_, code, _, _, _)| *code == c).map(|(a, _, _, _, _)| *a)
+    #[inline]
+    #[must_use]
+    pub const fn key_size(&self) -> usize {
+        match self {
+            Self::Aes256 | Self::Twofish | Self::Serpent | Self::ChaCha20Poly1305 |
+            Self::XChaCha20Poly1305 | Self::Camellia | Self::Blowfish | Self::Aria |
+            Self::Kuznyechik | Self::Threefish256 | Self::Magma | Self::Speck128_256 => 32,
+            Self::TripleDes => 24,
+            Self::Cast5 | Self::Idea | Self::Sm4 | Self::Seed |
+            Self::Rc6 | Self::Gift128 | Self::Ascon128 => 16,
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn salt_context(&self) -> &'static [u8] {
+        match self {
+            Self::Aes256 => b"cascade-aes256",
+            Self::TripleDes => b"cascade-3des",
+            Self::Twofish => b"cascade-twofish",
+            Self::Serpent => b"cascade-serpent",
+            Self::ChaCha20Poly1305 => b"cascade-chacha20",
+            Self::XChaCha20Poly1305 => b"cascade-xchacha20",
+            Self::Camellia => b"cascade-camellia",
+            Self::Blowfish => b"cascade-blowfish",
+            Self::Cast5 => b"cascade-cast5",
+            Self::Idea => b"cascade-idea",
+            Self::Aria => b"cascade-aria",
+            Self::Sm4 => b"cascade-sm4",
+            Self::Kuznyechik => b"cascade-kuznyechik",
+            Self::Seed => b"cascade-seed",
+            Self::Threefish256 => b"cascade-threefish",
+            Self::Rc6 => b"cascade-rc6",
+            Self::Magma => b"cascade-magma",
+            Self::Speck128_256 => b"cascade-speck",
+            Self::Gift128 => b"cascade-gift",
+            Self::Ascon128 => b"cascade-ascon",
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub const fn from_code(c: char) -> Option<Algorithm> {
+        match c {
+            'A' => Some(Self::Aes256),
+            'T' => Some(Self::TripleDes),
+            'W' => Some(Self::Twofish),
+            'S' => Some(Self::Serpent),
+            'C' => Some(Self::ChaCha20Poly1305),
+            'X' => Some(Self::XChaCha20Poly1305),
+            'M' => Some(Self::Camellia),
+            'B' => Some(Self::Blowfish),
+            'F' => Some(Self::Cast5),
+            'I' => Some(Self::Idea),
+            'R' => Some(Self::Aria),
+            '4' => Some(Self::Sm4),
+            'K' => Some(Self::Kuznyechik),
+            'E' => Some(Self::Seed),
+            '3' => Some(Self::Threefish256),
+            '6' => Some(Self::Rc6),
+            'G' => Some(Self::Magma),
+            'P' => Some(Self::Speck128_256),
+            'J' => Some(Self::Gift128),
+            'N' => Some(Self::Ascon128),
+            _ => None,
+        }
     }
 }
 
@@ -124,8 +209,16 @@ macro_rules! cbc_impl {
                 .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
 
             let padding_len = *buffer.last().ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))? as usize;
-            if padding_len == 0 || padding_len > $block_size || padding_len > buffer.len()
-                || !buffer[buffer.len() - padding_len..].iter().all(|&b| b == padding_len as u8) {
+            if padding_len == 0 || padding_len > $block_size || padding_len > buffer.len() {
+                return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
+            }
+            // Constant-time padding validation to prevent timing side-channels
+            let padding_byte = padding_len as u8;
+            let mut diff = 0u8;
+            for &b in &buffer[buffer.len() - padding_len..] {
+                diff |= b ^ padding_byte;
+            }
+            if diff != 0 {
                 return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
             }
             buffer.truncate(buffer.len() - padding_len);
@@ -220,7 +313,16 @@ macro_rules! cipher05_cbc_impl {
                 prev = ct_backup;
             }
             let padding_len = *buffer.last().ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))? as usize;
-            if padding_len == 0 || padding_len > $block_size || padding_len > buffer.len() || !buffer[buffer.len() - padding_len..].iter().all(|&b| b == padding_len as u8) {
+            if padding_len == 0 || padding_len > $block_size || padding_len > buffer.len() {
+                return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
+            }
+            // Constant-time padding validation to prevent timing side-channels
+            let padding_byte = padding_len as u8;
+            let mut diff = 0u8;
+            for &b in &buffer[buffer.len() - padding_len..] {
+                diff |= b ^ padding_byte;
+            }
+            if diff != 0 {
                 return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
             }
             buffer.truncate(buffer.len() - padding_len);

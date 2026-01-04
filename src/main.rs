@@ -248,11 +248,13 @@ fn generate_random_algorithms(count: usize) -> Vec<Algorithm> {
 
 /// Check if any individual algorithm flags were specified
 fn has_algorithm_flags(cli: &Cli) -> bool {
-    cli.aes || cli.triple_des || cli.twofish || cli.serpent ||
-    cli.chacha || cli.xchacha || cli.camellia || cli.blowfish ||
-    cli.cast5 || cli.idea || cli.aria || cli.sm4 || cli.kuznyechik ||
-    cli.seed || cli.threefish || cli.rc6 || cli.magma || cli.speck ||
-    cli.gift || cli.ascon
+    [
+        cli.aes, cli.triple_des, cli.twofish, cli.serpent,
+        cli.chacha, cli.xchacha, cli.camellia, cli.blowfish,
+        cli.cast5, cli.idea, cli.aria, cli.sm4, cli.kuznyechik,
+        cli.seed, cli.threefish, cli.rc6, cli.magma, cli.speck,
+        cli.gift, cli.ascon,
+    ].into_iter().any(|f| f)
 }
 
 fn get_password(cli: &Cli) -> Result<Zeroizing<Vec<u8>>> {
@@ -346,13 +348,13 @@ fn create_progress_bar(total: u64, msg: &str) -> ProgressBar {
     pb
 }
 
-fn cmd_keygen(output: PathBuf, export_pubkey: Option<PathBuf>) -> Result<()> {
+fn cmd_keygen(output: &Path, export_pubkey: Option<&Path>) -> Result<()> {
     eprintln!("󰌆 Generating hybrid X25519 + Kyber1024 keypair...");
 
     let keypair = HybridKeypair::generate();
     let json = keypair.to_json().context("Failed to serialize keypair")?;
 
-    fs::write(&output, &json).with_context(|| format!("Failed to write keypair to {:?}", output))?;
+    fs::write(output, &json).with_context(|| format!("Failed to write keypair to {:?}", output))?;
     eprintln!("✓ Keypair saved to: {:?}", output);
 
     // Optionally export public key
@@ -361,7 +363,7 @@ fn cmd_keygen(output: PathBuf, export_pubkey: Option<PathBuf>) -> Result<()> {
             .public
             .to_json()
             .context("Failed to serialize public key")?;
-        fs::write(&pubkey_path, &pubkey_json)
+        fs::write(pubkey_path, &pubkey_json)
             .with_context(|| format!("Failed to write public key to {:?}", pubkey_path))?;
         eprintln!("✓ Public key exported to: {:?}", pubkey_path);
     }
@@ -375,8 +377,8 @@ fn cmd_keygen(output: PathBuf, export_pubkey: Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_export_pubkey(input: PathBuf, output: PathBuf) -> Result<()> {
-    let json = fs::read_to_string(&input)
+fn cmd_export_pubkey(input: &Path, output: &Path) -> Result<()> {
+    let json = fs::read_to_string(input)
         .with_context(|| format!("Failed to read keypair file: {:?}", input))?;
 
     let keypair = HybridKeypair::from_json(&json).context("Failed to parse keypair")?;
@@ -385,7 +387,7 @@ fn cmd_export_pubkey(input: PathBuf, output: PathBuf) -> Result<()> {
         .to_json()
         .context("Failed to serialize public key")?;
 
-    fs::write(&output, &pubkey_json)
+    fs::write(output, &pubkey_json)
         .with_context(|| format!("Failed to write public key to {:?}", output))?;
 
     eprintln!("✓ Public key exported to: {:?}", output);
@@ -475,7 +477,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
                 algo_count,
                 if algo_count == 1 { "" } else { "s" },
                 if algo_count <= 5 {
-                    format!(": {}", algorithms.iter().map(|a| a.name()).collect::<Vec<_>>().join(" → "))
+                    format!(": {}", algorithms.iter().map(Algorithm::name).collect::<Vec<_>>().join(" → "))
                 } else { String::new() }
             );
         }
@@ -534,10 +536,8 @@ fn main() -> Result<()> {
         Some(Commands::Keygen {
             output,
             export_pubkey,
-        }) => cmd_keygen(output.clone(), export_pubkey.clone()),
-        Some(Commands::ExportPubkey { input, output }) => {
-            cmd_export_pubkey(input.clone(), output.clone())
-        }
+        }) => cmd_keygen(output, export_pubkey.as_deref()),
+        Some(Commands::ExportPubkey { input, output }) => cmd_export_pubkey(input, output),
         None => cmd_encrypt_decrypt(cli),
     }
 }

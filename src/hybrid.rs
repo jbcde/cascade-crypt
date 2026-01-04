@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use thiserror::Error;
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519Public, StaticSecret};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 #[derive(Error, Debug)]
 pub enum HybridError {
@@ -44,7 +44,8 @@ pub struct HybridPublicKey {
 }
 
 /// Combined private key (X25519 + Kyber1024)
-#[derive(Serialize, Deserialize)]
+/// Automatically zeroed on drop to prevent key material from persisting in memory.
+#[derive(Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct HybridPrivateKey {
     pub x25519: [u8; 32],
     pub kyber: Vec<u8>,

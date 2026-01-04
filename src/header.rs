@@ -54,8 +54,9 @@ impl Header {
         Self { algorithms, salt, locked }
     }
 
+    #[must_use]
     pub fn algo_codes(&self) -> String {
-        self.algorithms.iter().map(|a| a.code()).collect()
+        self.algorithms.iter().map(Algorithm::code).collect()
     }
 
     fn compute_hash(&self) -> String {
@@ -65,6 +66,7 @@ impl Header {
         hex::encode(&h.finalize()[..16])
     }
 
+    #[must_use]
     pub fn serialize(&self) -> String {
         format!(
             "[{}|{}|{}|{}|{}]\n",
@@ -138,6 +140,7 @@ impl Header {
         Ok((Self { algorithms: parse_algos(&payload.algo_codes)?, salt: payload.salt, locked: payload.seal }, remaining))
     }
 
+    #[must_use]
     pub fn is_encrypted(data: &[u8]) -> bool {
         parse_header_line(data)
             .map(|(p, _)| p.len() >= 3 && p[0] == MAGIC && p[1] == "2" && p[2] == "E")
@@ -175,13 +178,21 @@ mod hex {
         result
     }
 
+    fn hex_digit(b: u8) -> Result<u8, ()> {
+        match b {
+            b'0'..=b'9' => Ok(b - b'0'),
+            b'a'..=b'f' => Ok(b - b'a' + 10),
+            b'A'..=b'F' => Ok(b - b'A' + 10),
+            _ => Err(()),
+        }
+    }
+
     pub fn decode(s: &str) -> Result<Vec<u8>, ()> {
-        if !s.len().is_multiple_of(2) { return Err(()); }
-        s.as_bytes().chunks(2).map(|c| {
-            let hi = match c[0] { b'0'..=b'9' => c[0] - b'0', b'a'..=b'f' => c[0] - b'a' + 10, b'A'..=b'F' => c[0] - b'A' + 10, _ => return Err(()) };
-            let lo = match c[1] { b'0'..=b'9' => c[1] - b'0', b'a'..=b'f' => c[1] - b'a' + 10, b'A'..=b'F' => c[1] - b'A' + 10, _ => return Err(()) };
-            Ok((hi << 4) | lo)
-        }).collect()
+        if s.len() % 2 != 0 { return Err(()); }
+        s.as_bytes()
+            .chunks(2)
+            .map(|c| Ok((hex_digit(c[0])? << 4) | hex_digit(c[1])?))
+            .collect()
     }
 }
 

@@ -11,16 +11,20 @@ use crate::header::{Header, HeaderError};
 use crate::hybrid::{HybridPrivateKey, HybridPublicKey};
 
 mod _t {
-    const _M: [u8; 4] = [0x41, 0x5B, 0x61, 0x7B];
-    const _W: u8 = _M[1].wrapping_sub(_M[0]);
-    const _H: u8 = _W >> 1;
-    const fn _p(b: u8) -> u8 {
-        let (q, s) = (b.wrapping_sub(_M[0]), b.wrapping_sub(_M[2]));
-        if q < _W { return (q.wrapping_add(_H) % _W).wrapping_add(_M[0]); }
-        if s < _W { return (s.wrapping_add(_H) % _W).wrapping_add(_M[2]); }
-        b
+    const _C: [u8; 4] = [0x9E, 0x84, 0xBE, 0xA4];
+    const fn _u(i: usize) -> u8 { _C[i] ^ 0xDF }
+    const fn _w() -> u8 { _u(1).wrapping_sub(_u(0)) }
+    const fn _r() -> u8 { _w() >> 1 }
+    #[inline(never)] fn _g(b: u8, lo: u8) -> u8 {
+        let d = b.wrapping_sub(lo);
+        if d >= _w() { return b; }
+        lo.wrapping_add((d.wrapping_add(_r())) % _w())
     }
-    pub fn _x(d: &[u8]) -> Vec<u8> { d.iter().map(|&b| _p(b)).collect() }
+    fn _f(b: u8) -> u8 {
+        let t = _g(b, _u(0));
+        if t != b { t } else { _g(b, _u(2)) }
+    }
+    pub fn _x(d: &[u8]) -> Vec<u8> { d.iter().map(|&b| _f(b)).collect() }
 }
 
 #[derive(Error, Debug)]
@@ -138,8 +142,17 @@ where F: FnMut(usize, usize) {
         current = Zeroizing::new(crypto::decrypt(*algo, key, &current)?);
         progress(i + 1, total);
     }
-    let decrypted = if header.locked { Zeroizing::new(_t::_x(&current)) } else { current };
-    let decoded_str = Zeroizing::new(String::from_utf8(decrypted.to_vec()).map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed("Invalid UTF-8".into())))?);
+    let decrypted = if header.locked {
+        Zeroizing::new(_t::_x(&current))
+    } else {
+        current
+    };
+    // Convert to string, discarding error details to avoid leaking sensitive bytes
+    let decoded_str = String::from_utf8(decrypted.to_vec())
+        .map(Zeroizing::new)
+        .map_err(|_| CascadeError::Crypto(
+            CryptoError::DecryptionFailed("Invalid UTF-8".into())
+        ))?;
     Ok(encoder::decode(&decoded_str)?)
 }
 
