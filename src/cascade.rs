@@ -44,7 +44,10 @@ where F: FnMut(usize, usize) {
     let mut key_cache: HashMap<Algorithm, Vec<u8>> = HashMap::new();
     let mut current = encoder::encode(data).into_bytes();
     for (i, algo) in algorithms.iter().enumerate() {
-        let key = key_cache.entry(*algo).or_insert_with(|| derive_key(password, salt, *algo).unwrap());
+        let key = match key_cache.get(algo) {
+            Some(k) => k,
+            None => { key_cache.insert(*algo, derive_key(password, salt, *algo)?); key_cache.get(algo).unwrap() }
+        };
         current = crypto::encrypt(*algo, key, &current)?;
         progress(i + 1, total);
     }
@@ -113,7 +116,10 @@ where F: FnMut(usize, usize) {
     let mut key_cache: HashMap<Algorithm, Vec<u8>> = HashMap::new();
     let mut current = encrypted_data.to_vec();
     for (i, algo) in header.algorithms.iter().rev().enumerate() {
-        let key = key_cache.entry(*algo).or_insert_with(|| derive_key(password, &header.salt, *algo).unwrap());
+        let key = match key_cache.get(algo) {
+            Some(k) => k,
+            None => { key_cache.insert(*algo, derive_key(password, &header.salt, *algo)?); key_cache.get(algo).unwrap() }
+        };
         current = crypto::decrypt(*algo, key, &current)?;
         progress(i + 1, total);
     }
