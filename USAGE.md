@@ -25,6 +25,7 @@ OPTIONS:
     -n, --random <COUNT>        Use N randomly selected algorithms
     -s, --silent                Suppress all status output
         --progress              Show progress bar during encryption/decryption
+        --lock                  Engage puzzle lock (requires --pubkey)
 
     -A, --aes                   AES-256-GCM [code: A]
     -T, --3des                  Triple-DES-CBC [code: T]
@@ -73,12 +74,7 @@ cascade-crypt -A -S -C -W -i file.bin -o file.enc
 # Result: AES -> Serpent -> ChaCha20 -> Twofish
 ```
 
-Algorithms are applied in command-line order. The same algorithm can be used multiple times:
-
-```bash
-cascade-crypt -A -S -A -S -A -i file.bin -o file.enc
-# Result: AES -> Serpent -> AES -> Serpent -> AES
-```
+Algorithms are applied in command-line order. Each flag can only be used once per command. To apply the same algorithm multiple times, use random mode (`-n`).
 
 ### Random Algorithm Selection
 
@@ -217,6 +213,24 @@ cascade-crypt -n 30 --pubkey recipient.pub -i secret.bin -o secret.enc
 # Decrypt
 cascade-crypt -d --privkey my.keypair -i secret.enc -o secret.bin
 ```
+
+### Puzzle Lock Mode
+
+Use `--lock` with `--pubkey` to apply an additional transformation to the encrypted payload. This adds another layer of protection that requires the private key to reverse:
+
+```bash
+# Encrypt with puzzle lock
+cascade-crypt -A -S -C --pubkey recipient.pub --lock -i secret.bin -o secret.enc
+
+# Decrypt (requires private key)
+cascade-crypt -d --privkey my.keypair -i secret.enc -o secret.bin -k "password"
+```
+
+The puzzle lock:
+- Requires `--pubkey` (only works with protected headers)
+- Applies a deterministic transformation to the encrypted data
+- Cannot be decrypted without the matching private key
+- Adds no significant overhead
 
 ## Password/Key Input
 
@@ -362,7 +376,8 @@ done
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Error (invalid arguments, encryption/decryption failure, etc.) |
+| 1 | Runtime error (encryption/decryption failure, missing files, etc.) |
+| 2 | Argument error (invalid flags, missing required options) |
 
 ## File Format
 
