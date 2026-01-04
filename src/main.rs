@@ -12,7 +12,7 @@ use cascade_crypt::{
     Algorithm, HybridKeypair, HybridPrivateKey, HybridPublicKey,
 };
 
-const ALL_ALGORITHMS: [Algorithm; 13] = [
+const ALL_ALGORITHMS: [Algorithm; 15] = [
     Algorithm::Aes256,
     Algorithm::TripleDes,
     Algorithm::Twofish,
@@ -26,6 +26,8 @@ const ALL_ALGORITHMS: [Algorithm; 13] = [
     Algorithm::Aria,
     Algorithm::Sm4,
     Algorithm::Kuznyechik,
+    Algorithm::Seed,
+    Algorithm::Threefish256,
 ];
 
 #[derive(Parser, Debug)]
@@ -34,8 +36,8 @@ const ALL_ALGORITHMS: [Algorithm; 13] = [
 #[command(long_about = "Encrypt binary files using multiple layered encryption algorithms.\n\n\
     Encryption algorithms are applied in the order specified on the command line.\n\
     Use -d to decrypt (algorithm order is auto-detected from file header).\n\n\
-    Algorithm codes: A=AES, T=3DES, W=Twofish, S=Serpent, C=ChaCha20,\n\
-    X=XChaCha20, M=Camellia, B=Blowfish, F=CAST5, I=IDEA, R=ARIA, 4=SM4, K=Kuznyechik\n\n\
+    Algorithm codes: A=AES, T=3DES, W=Twofish, S=Serpent, C=ChaCha20, X=XChaCha20,\n\
+    M=Camellia, B=Blowfish, F=CAST5, I=IDEA, R=ARIA, 4=SM4, K=Kuznyechik, E=SEED, 3=Threefish\n\n\
     Use 'keygen' subcommand to generate hybrid X25519+Kyber keypairs for header protection.")]
 struct Cli {
     #[command(subcommand)]
@@ -112,6 +114,14 @@ struct Cli {
     #[arg(short = 'K', long = "kuznyechik")]
     kuznyechik: bool,
 
+    /// Use SEED encryption (Korean standard) [code: E]
+    #[arg(short = 'E', long = "seed")]
+    seed: bool,
+
+    /// Use Threefish-256 encryption (Schneier's cipher) [code: 3]
+    #[arg(short = '3', long = "threefish")]
+    threefish: bool,
+
     // ===== I/O options =====
     /// Input file (use '-' for stdin)
     #[arg(short = 'i', long = "input")]
@@ -184,6 +194,8 @@ fn parse_algorithms_in_order() -> Vec<Algorithm> {
             "-R" | "--aria" => algorithms.push(Algorithm::Aria),
             "-4" | "--sm4" => algorithms.push(Algorithm::Sm4),
             "-K" | "--kuznyechik" => algorithms.push(Algorithm::Kuznyechik),
+            "-E" | "--seed" => algorithms.push(Algorithm::Seed),
+            "-3" | "--threefish" => algorithms.push(Algorithm::Threefish256),
             _ => {}
         }
     }
@@ -201,7 +213,8 @@ fn generate_random_algorithms(count: usize) -> Vec<Algorithm> {
 fn has_algorithm_flags(cli: &Cli) -> bool {
     cli.aes || cli.triple_des || cli.twofish || cli.serpent ||
     cli.chacha || cli.xchacha || cli.camellia || cli.blowfish ||
-    cli.cast5 || cli.idea || cli.aria || cli.sm4 || cli.kuznyechik
+    cli.cast5 || cli.idea || cli.aria || cli.sm4 || cli.kuznyechik ||
+    cli.seed || cli.threefish
 }
 
 fn get_password(cli: &Cli) -> Result<Vec<u8>> {
@@ -401,7 +414,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
                       -A (AES-256)      -T (3DES)         -W (Twofish)      -S (Serpent)\n\
                       -C (ChaCha20)     -X (XChaCha20)    -M (Camellia)     -B (Blowfish)\n\
                       -F (CAST5)        -I (IDEA)         -R (ARIA)         -4 (SM4)\n\
-                      -K (Kuznyechik)\n\
+                      -K (Kuznyechik)   -E (SEED)         -3 (Threefish)\n\
                     Or use -n <count> for random algorithm selection."
                 );
             }

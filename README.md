@@ -4,7 +4,7 @@ Cascading binary encryption tool with user-controlled algorithm ordering. Encryp
 
 ## Features
 
-- **13 symmetric ciphers** - mix and match in any order
+- **15 symmetric ciphers** - mix and match in any order
 - **Cascading encryption** - algorithms applied sequentially in command-line order
 - **Random mode** - randomly select N algorithms (with duplicates) for unpredictable layering
 - **Silent mode** - suppress all output for operational security
@@ -78,6 +78,8 @@ Suppresses all status output (algorithm chain, completion messages).
 | `-R` | R | ARIA-256-CBC | Block |
 | `-4` | 4 | SM4-CBC | Block |
 | `-K` | K | Kuznyechik-CBC | Block |
+| `-E` | E | SEED-CBC | Block |
+| `-3` | 3 | Threefish-256-CBC | Block |
 
 ## Hybrid Header Protection
 
@@ -157,8 +159,8 @@ Error: Encrypted header requires private key
 ## Examples
 
 ```bash
-# Maximum paranoia - all 13 ciphers
-cascade-crypt -A -T -W -S -C -X -M -B -F -I -R -4 -K -i file.bin -o fortress.enc
+# Maximum paranoia - all 15 ciphers
+cascade-crypt -A -T -W -S -C -X -M -B -F -I -R -4 -K -E -3 -i file.bin -o fortress.enc
 
 # Quick and modern
 cascade-crypt -C -A -i file.bin -o file.enc
@@ -183,7 +185,7 @@ cascade-crypt -s -d -i secret.enc -o secret.bin -k "password"
 
 ## Security Notes
 
-- **13! = 6,227,020,800** possible algorithm orderings
+- **15! = 1,307,674,368,000** possible algorithm orderings
 - **Argon2id** derives unique 256-bit keys per algorithm from master password
 - **Random salt** ensures identical files encrypt differently
 - **AEAD ciphers** (AES-GCM, ChaCha20-Poly1305, XChaCha20-Poly1305) provide authentication
@@ -191,11 +193,11 @@ cascade-crypt -s -d -i secret.enc -o secret.bin -k "password"
 
 ## Performance
 
-Tested on 1MB file through all 13 ciphers:
+Tested on 1MB file through all 15 ciphers (Intel Xeon E-2176M @ 2.70GHz):
 - Encryption: ~1.4s
 - Decryption: ~1.5s
 
-Bottlenecks: Argon2id key derivation (13 iterations) and 3DES.
+Bottlenecks: Argon2id key derivation (15 unique keys) and Serpent cipher.
 
 ## License
 

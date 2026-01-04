@@ -9,7 +9,7 @@ license = "MIT"
 # CLI
 clap = { version = "4", features = ["derive"] }
 
-# Encryption - Block ciphers (RustCrypto ecosystem, cipher 0.4 compatible)
+# Encryption - Block ciphers (RustCrypto ecosystem, cipher 0.4)
 aes-gcm = "0.10"
 des = "0.8"
 twofish = "0.7"
@@ -21,6 +21,12 @@ idea = "0.5"
 aria = "0.1"
 sm4 = "0.5"
 kuznyechik = "0.8"
+
+# New ciphers (cipher 0.4 compatible)
+kisaseed = "0.1"
+
+# Legacy cipher crates (need custom wrappers)
+threefish-cipher = "0.4"          # cipher 0.2 - custom impl
 
 # Encryption - Stream ciphers
 chacha20poly1305 = "0.10"

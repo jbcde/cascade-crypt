@@ -28,6 +28,8 @@ pub enum Algorithm {
     Aria,              // 'R'
     Sm4,               // '4'
     Kuznyechik,        // 'K'
+    Seed,              // 'E' (Korean standard)
+    Threefish256,      // '3' (Schneier's cipher)
 }
 
 impl Algorithm {
@@ -45,6 +47,8 @@ impl Algorithm {
         (Algorithm::Aria, 'R', "ARIA-256-CBC", 32, b"cascade-aria"),
         (Algorithm::Sm4, '4', "SM4-CBC", 16, b"cascade-sm4"),
         (Algorithm::Kuznyechik, 'K', "Kuznyechik-CBC", 32, b"cascade-kuznyechik"),
+        (Algorithm::Seed, 'E', "SEED-CBC", 16, b"cascade-seed"),
+        (Algorithm::Threefish256, '3', "Threefish-256-CBC", 32, b"cascade-threefish"),
     ];
 
     fn data(&self) -> (char, &'static str, usize, &'static [u8]) {
@@ -160,6 +164,81 @@ macro_rules! aead_impl {
     }};
 }
 
+// Custom implementation for Threefish256 (uses cipher 0.2 API)
+macro_rules! threefish_impl {
+    () => {{
+        use threefish_cipher::{Threefish256, NewBlockCipher, BlockCipher};
+        use cipher::generic_array::GenericArray;
+
+        fn enc(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+            if key.len() != 32 {
+                return Err(CryptoError::InvalidKeyLength { expected: 32, got: key.len() });
+            }
+            let cipher = Threefish256::new(GenericArray::from_slice(key));
+            let block_size = 32;
+            let mut iv = [0u8; 32];
+            rand::thread_rng().fill_bytes(&mut iv);
+
+            // PKCS7 padding
+            let padding_len = block_size - (plaintext.len() % block_size);
+            let mut buffer = vec![padding_len as u8; plaintext.len() + padding_len];
+            buffer[..plaintext.len()].copy_from_slice(plaintext);
+
+            // CBC encrypt
+            let mut prev = iv;
+            for chunk in buffer.chunks_mut(block_size) {
+                for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
+                let mut block = GenericArray::clone_from_slice(chunk);
+                cipher.encrypt_block(&mut block);
+                chunk.copy_from_slice(&block);
+                prev.copy_from_slice(chunk);
+            }
+
+            let mut result = Vec::with_capacity(32 + buffer.len());
+            result.extend_from_slice(&iv);
+            result.extend(buffer);
+            Ok(result)
+        }
+
+        fn dec(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
+            if key.len() != 32 {
+                return Err(CryptoError::InvalidKeyLength { expected: 32, got: key.len() });
+            }
+            if ciphertext.len() < 32 {
+                return Err(CryptoError::InvalidNonce);
+            }
+            let cipher = Threefish256::new(GenericArray::from_slice(key));
+            let block_size = 32;
+            let (iv, data) = ciphertext.split_at(32);
+
+            // CBC decrypt
+            let mut buffer = data.to_vec();
+            let mut prev = [0u8; 32];
+            prev.copy_from_slice(iv);
+            for chunk in buffer.chunks_mut(block_size) {
+                let ct = chunk.to_vec();
+                let mut block = GenericArray::clone_from_slice(chunk);
+                cipher.decrypt_block(&mut block);
+                chunk.copy_from_slice(&block);
+                for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
+                prev.copy_from_slice(&ct);
+            }
+
+            // Remove PKCS7 padding
+            let padding_len = *buffer.last().ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))? as usize;
+            if padding_len == 0 || padding_len > block_size || padding_len > buffer.len()
+                || !buffer[buffer.len() - padding_len..].iter().all(|&b| b == padding_len as u8) {
+                return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
+            }
+            buffer.truncate(buffer.len() - padding_len);
+            Ok(buffer)
+        }
+
+        (enc as fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>,
+         dec as fn(&[u8], &[u8]) -> Result<Vec<u8>, CryptoError>)
+    }};
+}
+
 pub fn encrypt(algo: Algorithm, key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
     let (enc, _) = get_cipher_fns(algo);
     enc(key, plaintext)
@@ -185,6 +264,8 @@ fn get_cipher_fns(algo: Algorithm) -> (fn(&[u8], &[u8]) -> Result<Vec<u8>, Crypt
         Algorithm::Aria => cbc_impl!(aria::Aria256, 32, 16, 16),
         Algorithm::Sm4 => cbc_impl!(sm4::Sm4, 16, 16, 16),
         Algorithm::Kuznyechik => cbc_impl!(kuznyechik::Kuznyechik, 32, 16, 16),
+        Algorithm::Seed => cbc_impl!(kisaseed::SEED, 16, 16, 16),
+        Algorithm::Threefish256 => threefish_impl!(),
     }
 }
 
@@ -213,6 +294,8 @@ mod tests {
     #[test] fn test_aria() { test_roundtrip(Algorithm::Aria); }
     #[test] fn test_sm4() { test_roundtrip(Algorithm::Sm4); }
     #[test] fn test_kuznyechik() { test_roundtrip(Algorithm::Kuznyechik); }
+    #[test] fn test_seed() { test_roundtrip(Algorithm::Seed); }
+    #[test] fn test_threefish256() { test_roundtrip(Algorithm::Threefish256); }
 
     #[test]
     fn test_different_nonces() {
