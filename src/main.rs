@@ -324,21 +324,32 @@ fn load_private_key(path: &PathBuf) -> Result<HybridPrivateKey> {
 
 fn create_progress_bar(total: u64, msg: &str) -> ProgressBar {
     let pb = ProgressBar::new(total);
-    pb.set_style(ProgressStyle::with_template("{msg} [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+    // Nerdfont: 󰌆 = nf-md-lock, 󰦝 = nf-md-shield_lock
+    // Using smooth Unicode blocks: ━ (filled), ╾ (current), ─ (empty)
+    let template = if msg.contains("Decrypt") {
+        // Decrypting: unlock icon 󰌊
+        "{spinner:.green} {msg:.bold.green} │{bar:40.green/dim}│ {pos}/{len} 󰁔 {eta}"
+    } else {
+        // Encrypting: lock icon 󰌆
+        "{spinner:.cyan} {msg:.bold.cyan} │{bar:40.cyan/dim}│ {pos}/{len} 󰁔 {eta}"
+    };
+    pb.set_style(ProgressStyle::with_template(template)
         .unwrap()
-        .progress_chars("##-"));
+        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "✓"])
+        .progress_chars("━╾─"));
     pb.set_message(msg.to_string());
+    pb.enable_steady_tick(std::time::Duration::from_millis(80));
     pb
 }
 
 fn cmd_keygen(output: PathBuf, export_pubkey: Option<PathBuf>) -> Result<()> {
-    eprintln!("Generating hybrid X25519 + Kyber1024 keypair...");
+    eprintln!("󰌆 Generating hybrid X25519 + Kyber1024 keypair...");
 
     let keypair = HybridKeypair::generate();
     let json = keypair.to_json().context("Failed to serialize keypair")?;
 
     fs::write(&output, &json).with_context(|| format!("Failed to write keypair to {:?}", output))?;
-    eprintln!("Keypair saved to: {:?}", output);
+    eprintln!("✓ Keypair saved to: {:?}", output);
 
     // Optionally export public key
     if let Some(pubkey_path) = export_pubkey {
@@ -348,14 +359,14 @@ fn cmd_keygen(output: PathBuf, export_pubkey: Option<PathBuf>) -> Result<()> {
             .context("Failed to serialize public key")?;
         fs::write(&pubkey_path, &pubkey_json)
             .with_context(|| format!("Failed to write public key to {:?}", pubkey_path))?;
-        eprintln!("Public key exported to: {:?}", pubkey_path);
+        eprintln!("✓ Public key exported to: {:?}", pubkey_path);
     }
 
-    eprintln!("\nKeypair contains:");
-    eprintln!("  - X25519 (classical elliptic curve)");
-    eprintln!("  - Kyber1024 (post-quantum lattice-based)");
-    eprintln!("\nShare the public key with others for encrypted headers.");
-    eprintln!("Keep the full keypair private for decryption.");
+    eprintln!("\n󰯄 Keypair contains:");
+    eprintln!("  󰻧 X25519 (classical elliptic curve)");
+    eprintln!("  󱉧 Kyber1024 (post-quantum lattice-based)");
+    eprintln!("\n󰒍 Share the public key with others for encrypted headers.");
+    eprintln!("󰌾 Keep the full keypair private for decryption.");
 
     Ok(())
 }
@@ -373,7 +384,7 @@ fn cmd_export_pubkey(input: PathBuf, output: PathBuf) -> Result<()> {
     fs::write(&output, &pubkey_json)
         .with_context(|| format!("Failed to write public key to {:?}", output))?;
 
-    eprintln!("Public key exported to: {:?}", output);
+    eprintln!("✓ Public key exported to: {:?}", output);
     Ok(())
 }
 
@@ -400,9 +411,9 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
         // Decrypt mode - algorithm order is in the header
         if let Some(privkey_path) = &cli.privkey {
             let private_key = load_private_key(privkey_path)?;
-            if !cli.silent { eprintln!("Decrypting with protected header..."); }
+            if !cli.silent { eprintln!("󰦝 Decrypting with protected header..."); }
             if show_progress {
-                let pb = create_progress_bar(100, "Decrypting");
+                let pb = create_progress_bar(100, "󰌊 Decrypting");
                 let result = decrypt_protected_with_progress(&input_data, &password, &private_key, |cur, total| {
                     pb.set_length(total as u64); pb.set_position(cur as u64);
                 }).context("Decryption failed")?;
@@ -413,7 +424,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             }
         } else {
             if show_progress {
-                let pb = create_progress_bar(100, "Decrypting");
+                let pb = create_progress_bar(100, "󰌊 Decrypting");
                 let result = decrypt_with_progress(&input_data, &password, |cur, total| {
                     pb.set_length(total as u64); pb.set_position(cur as u64);
                 }).context("Decryption failed")?;
@@ -458,20 +469,20 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
         let algo_count = algorithms.len();
         if !cli.silent {
             eprintln!(
-                "Encrypting with {} algorithm{}{}",
+                "󰌆 Encrypting with {} algorithm{}{}",
                 algo_count,
                 if algo_count == 1 { "" } else { "s" },
                 if algo_count <= 5 {
-                    format!(": {}", algorithms.iter().map(|a| a.name()).collect::<Vec<_>>().join(" -> "))
+                    format!(": {}", algorithms.iter().map(|a| a.name()).collect::<Vec<_>>().join(" → "))
                 } else { String::new() }
             );
         }
 
         if let Some(pubkey_path) = &cli.pubkey {
             let public_key = load_public_key(pubkey_path)?;
-            if !cli.silent { eprintln!("Using protected header (hybrid X25519+Kyber encryption)"); }
+            if !cli.silent { eprintln!("󰦝 Using protected header (hybrid X25519+Kyber encryption)"); }
             if show_progress {
-                let pb = create_progress_bar(algo_count as u64, "Encrypting");
+                let pb = create_progress_bar(algo_count as u64, "󰌆 Encrypting");
                 let result = encrypt_protected_with_progress(&input_data, &password, algorithms, &public_key, |cur, total| {
                     pb.set_length(total as u64); pb.set_position(cur as u64);
                 }).context("Encryption failed")?;
@@ -482,7 +493,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             }
         } else {
             if show_progress {
-                let pb = create_progress_bar(algo_count as u64, "Encrypting");
+                let pb = create_progress_bar(algo_count as u64, "󰌆 Encrypting");
                 let result = encrypt_with_progress(&input_data, &password, algorithms, |cur, total| {
                     pb.set_length(total as u64); pb.set_position(cur as u64);
                 }).context("Encryption failed")?;
@@ -499,9 +510,9 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
 
     if !cli.silent {
         if cli.decrypt {
-            eprintln!("Decryption complete.");
+            eprintln!("✓ Decryption complete.");
         } else {
-            eprintln!("Encryption complete.");
+            eprintln!("✓ Encryption complete.");
         }
     }
 

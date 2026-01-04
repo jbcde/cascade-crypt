@@ -193,8 +193,9 @@ cascade-crypt -s -d -i secret.enc -o secret.bin -k "password"
 - **20! = 2,432,902,008,176,640,000** possible algorithm orderings
 - **Argon2id** derives unique 256-bit keys per algorithm from master password
 - **Random salt** ensures identical files encrypt differently
-- **AEAD ciphers** (AES-GCM, ChaCha20-Poly1305, XChaCha20-Poly1305) provide authentication
+- **AEAD ciphers** (AES-GCM, ChaCha20-Poly1305, XChaCha20-Poly1305, Ascon) provide authentication
 - **Hybrid encryption** combines classical and post-quantum security for header protection
+- **Quantum resistance**: Grover's algorithm halves effective key strength. 256-bit ciphers remain secure (128-bit post-quantum). Avoid using *only* 128-bit ciphers (`-F -I -4 -E -6 -J -N`) if quantum resistance matters—include at least one 256-bit cipher in your cascade.
 
 ## Performance
 
