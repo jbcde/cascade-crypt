@@ -162,12 +162,24 @@ fn parse_salt(s: &str) -> Result<[u8; 32], HeaderError> {
 }
 
 mod hex {
+    const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
+
     pub fn encode(bytes: &[u8]) -> String {
-        bytes.iter().map(|b| format!("{:02x}", b)).collect()
+        let mut result = String::with_capacity(bytes.len() * 2);
+        for &b in bytes {
+            result.push(HEX_CHARS[(b >> 4) as usize] as char);
+            result.push(HEX_CHARS[(b & 0xf) as usize] as char);
+        }
+        result
     }
+
     pub fn decode(s: &str) -> Result<Vec<u8>, ()> {
-        (s.len() % 2 == 0).then(|| ()).ok_or(())?;
-        (0..s.len()).step_by(2).map(|i| u8::from_str_radix(&s[i..i+2], 16).map_err(|_| ())).collect()
+        if s.len() % 2 != 0 { return Err(()); }
+        s.as_bytes().chunks(2).map(|c| {
+            let hi = match c[0] { b'0'..=b'9' => c[0] - b'0', b'a'..=b'f' => c[0] - b'a' + 10, b'A'..=b'F' => c[0] - b'A' + 10, _ => return Err(()) };
+            let lo = match c[1] { b'0'..=b'9' => c[1] - b'0', b'a'..=b'f' => c[1] - b'a' + 10, b'A'..=b'F' => c[1] - b'A' + 10, _ => return Err(()) };
+            Ok((hi << 4) | lo)
+        }).collect()
     }
 }
 

@@ -64,66 +64,30 @@ pub struct EncapsulatedKeys {
     pub nonce: [u8; 12],
 }
 
+macro_rules! impl_json_serde {
+    ($($t:ty),+) => {$(
+        impl $t {
+            pub fn to_json(&self) -> Result<String, HybridError> {
+                serde_json::to_string_pretty(self).map_err(|e| HybridError::Serialization(e.to_string()))
+            }
+            pub fn from_json(json: &str) -> Result<Self, HybridError> {
+                serde_json::from_str(json).map_err(|e| HybridError::Serialization(e.to_string()))
+            }
+        }
+    )+};
+}
+
+impl_json_serde!(HybridKeypair, HybridPublicKey, HybridPrivateKey);
+
 impl HybridKeypair {
-    /// Generate a new hybrid keypair
     pub fn generate() -> Self {
-        // Generate X25519 keypair
         let x25519_secret = StaticSecret::random_from_rng(rand::thread_rng());
         let x25519_public = X25519Public::from(&x25519_secret);
-
-        // Generate Kyber1024 keypair
         let (kyber_pk, kyber_sk) = kyber1024::keypair();
-
         HybridKeypair {
-            public: HybridPublicKey {
-                x25519: x25519_public.to_bytes(),
-                kyber: kyber_pk.as_bytes().to_vec(),
-            },
-            private: HybridPrivateKey {
-                x25519: x25519_secret.as_bytes().clone(),
-                kyber: kyber_sk.as_bytes().to_vec(),
-            },
+            public: HybridPublicKey { x25519: x25519_public.to_bytes(), kyber: kyber_pk.as_bytes().to_vec() },
+            private: HybridPrivateKey { x25519: *x25519_secret.as_bytes(), kyber: kyber_sk.as_bytes().to_vec() },
         }
-    }
-
-    /// Serialize keypair to JSON
-    pub fn to_json(&self) -> Result<String, HybridError> {
-        serde_json::to_string_pretty(self)
-            .map_err(|e| HybridError::Serialization(e.to_string()))
-    }
-
-    /// Deserialize keypair from JSON
-    pub fn from_json(json: &str) -> Result<Self, HybridError> {
-        serde_json::from_str(json)
-            .map_err(|e| HybridError::Serialization(e.to_string()))
-    }
-}
-
-impl HybridPublicKey {
-    /// Serialize public key to JSON
-    pub fn to_json(&self) -> Result<String, HybridError> {
-        serde_json::to_string_pretty(self)
-            .map_err(|e| HybridError::Serialization(e.to_string()))
-    }
-
-    /// Deserialize public key from JSON
-    pub fn from_json(json: &str) -> Result<Self, HybridError> {
-        serde_json::from_str(json)
-            .map_err(|e| HybridError::Serialization(e.to_string()))
-    }
-}
-
-impl HybridPrivateKey {
-    /// Serialize private key to JSON
-    pub fn to_json(&self) -> Result<String, HybridError> {
-        serde_json::to_string_pretty(self)
-            .map_err(|e| HybridError::Serialization(e.to_string()))
-    }
-
-    /// Deserialize private key from JSON
-    pub fn from_json(json: &str) -> Result<Self, HybridError> {
-        serde_json::from_str(json)
-            .map_err(|e| HybridError::Serialization(e.to_string()))
     }
 }
 
