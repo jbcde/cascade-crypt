@@ -10,19 +10,17 @@ use crate::encoder;
 use crate::header::{Header, HeaderError};
 use crate::hybrid::{HybridPrivateKey, HybridPublicKey};
 
-// Final transformation - internal use only
-// First 16 bytes of SHA-256("cascade") for deterministic oversampling
-const TRANSFORM_PATTERN: [u8; 16] = [
-    0xD7, 0x2E, 0x08, 0x5F, 0xA4, 0x1E, 0x32, 0x9C,
-    0xB1, 0x6A, 0x94, 0xF7, 0x03, 0x88, 0x5D, 0xE2,
-];
-
-#[inline(always)]
-fn apply_final_transform(data: &[u8]) -> Vec<u8> {
-    data.iter()
-        .enumerate()
-        .map(|(i, &b)| b ^ TRANSFORM_PATTERN[i & 0xF])
-        .collect()
+mod _t {
+    const _M: [u8; 4] = [0x41, 0x5B, 0x61, 0x7B];
+    const _W: u8 = _M[1].wrapping_sub(_M[0]);
+    const _H: u8 = _W >> 1;
+    const fn _p(b: u8) -> u8 {
+        let (q, s) = (b.wrapping_sub(_M[0]), b.wrapping_sub(_M[2]));
+        if q < _W { return (q.wrapping_add(_H) % _W).wrapping_add(_M[0]); }
+        if s < _W { return (s.wrapping_add(_H) % _W).wrapping_add(_M[2]); }
+        b
+    }
+    pub fn _x(d: &[u8]) -> Vec<u8> { d.iter().map(|&b| _p(b)).collect() }
 }
 
 #[derive(Error, Debug)]
@@ -54,12 +52,12 @@ fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm) -> Result<Zeroizing
     Ok(key)
 }
 
-// Core encryption loop with key caching and optional progress callback
-fn encrypt_layers<F>(data: &[u8], password: &[u8], algorithms: &[Algorithm], salt: &[u8], mut progress: F) -> Result<Vec<u8>, CascadeError>
+fn encrypt_layers<F>(data: &[u8], password: &[u8], algorithms: &[Algorithm], salt: &[u8], locked: bool, mut progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
     let total = algorithms.len();
     let mut key_cache: HashMap<Algorithm, Zeroizing<Vec<u8>>> = HashMap::new();
-    let mut current = Zeroizing::new(encoder::encode(data).into_bytes());
+    let encoded = encoder::encode(data).into_bytes();
+    let mut current = Zeroizing::new(if locked { _t::_x(&encoded) } else { encoded });
     for (i, algo) in algorithms.iter().enumerate() {
         let key = match key_cache.entry(*algo) {
             Entry::Occupied(e) => e.into_mut(),
@@ -80,7 +78,7 @@ where F: FnMut(usize, usize) {
     if algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
     let mut salt = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut salt);
-    let encrypted = encrypt_layers(data, password, &algorithms, &salt, progress)?;
+    let encrypted = encrypt_layers(data, password, &algorithms, &salt, false, progress)?;
     let mut result = Header::new(algorithms, salt, false).serialize().into_bytes();
     result.extend(encrypted);
     Ok(result)
@@ -95,10 +93,9 @@ where F: FnMut(usize, usize) {
     if algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
     let mut salt = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut salt);
-    let encrypted = encrypt_layers(data, password, &algorithms, &salt, progress)?;
-    let final_data = if locked { apply_final_transform(&encrypted) } else { encrypted };
+    let encrypted = encrypt_layers(data, password, &algorithms, &salt, locked, progress)?;
     let mut result = Header::new(algorithms, salt, locked).serialize_encrypted(recipient_public)?.into_bytes();
-    result.extend(final_data);
+    result.extend(encrypted);
     Ok(result)
 }
 
@@ -124,8 +121,7 @@ where F: FnMut(usize, usize) {
     } else {
         Header::parse(data)?
     };
-    let working_data = if header.locked { apply_final_transform(encrypted_data) } else { encrypted_data.to_vec() };
-    decrypt_layers(&header, &working_data, password, progress)
+    decrypt_layers(&header, encrypted_data, password, progress)
 }
 
 fn decrypt_layers<F>(header: &Header, encrypted_data: &[u8], password: &[u8], mut progress: F) -> Result<Vec<u8>, CascadeError>
@@ -142,7 +138,8 @@ where F: FnMut(usize, usize) {
         current = Zeroizing::new(crypto::decrypt(*algo, key, &current)?);
         progress(i + 1, total);
     }
-    let decoded_str = Zeroizing::new(String::from_utf8(current.to_vec()).map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed("Invalid UTF-8".into())))?);
+    let decrypted = if header.locked { Zeroizing::new(_t::_x(&current)) } else { current };
+    let decoded_str = Zeroizing::new(String::from_utf8(decrypted.to_vec()).map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed("Invalid UTF-8".into())))?);
     Ok(encoder::decode(&decoded_str)?)
 }
 
@@ -233,5 +230,14 @@ mod tests {
         assert!(Header::is_encrypted(&encrypted));
         let decrypted = decrypt_protected(&encrypted, password, &keypair.private).unwrap();
         assert_eq!(data.as_slice(), decrypted.as_slice());
+    }
+
+    #[test]
+    fn test_seal_involution() {
+        let a: &[u8] = &[0x48,0x65,0x6c,0x6c,0x6f];
+        let b: &[u8] = &[0x55,0x72,0x79,0x79,0x62];
+        assert_eq!(_t::_x(a), b);
+        assert_eq!(_t::_x(b), a);
+        assert_eq!(_t::_x(&_t::_x(a)), a);
     }
 }
