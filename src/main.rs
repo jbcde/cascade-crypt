@@ -65,6 +65,10 @@ struct Cli {
     #[arg(long = "progress")]
     progress: bool,
 
+    /// Engage puzzle lock (requires --pubkey)
+    #[arg(long = "lock")]
+    lock: bool,
+
     // ===== Original algorithms =====
     /// Use AES-256-GCM encryption [code: A]
     #[arg(short = 'A', long = "aes")]
@@ -480,17 +484,25 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
 
         if let Some(pubkey_path) = &cli.pubkey {
             let public_key = load_public_key(pubkey_path)?;
-            if !cli.silent { eprintln!("󰦝 Using protected header (hybrid X25519+Kyber encryption)"); }
+            if !cli.silent {
+                if cli.lock {
+                    eprintln!("󰌾 Using protected header with puzzle lock 󱡅");
+                } else {
+                    eprintln!("󰦝 Using protected header (hybrid X25519+Kyber encryption)");
+                }
+            }
             if show_progress {
                 let pb = create_progress_bar(algo_count as u64, "󰌆 Encrypting");
-                let result = encrypt_protected_with_progress(&input_data, &password, algorithms, &public_key, |cur, total| {
+                let result = encrypt_protected_with_progress(&input_data, &password, algorithms, &public_key, cli.lock, |cur, total| {
                     pb.set_length(total as u64); pb.set_position(cur as u64);
                 }).context("Encryption failed")?;
                 pb.finish();
                 result
             } else {
-                encrypt_protected(&input_data, &password, algorithms, &public_key).context("Encryption failed")?
+                encrypt_protected(&input_data, &password, algorithms, &public_key, cli.lock).context("Encryption failed")?
             }
+        } else if cli.lock {
+            anyhow::bail!("--lock requires --pubkey for protected header encryption");
         } else {
             if show_progress {
                 let pb = create_progress_bar(algo_count as u64, "󰌆 Encrypting");
