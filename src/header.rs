@@ -38,17 +38,20 @@ pub enum HeaderError {
 struct EncryptedPayload {
     algo_codes: String,
     salt: [u8; 32],
+    #[serde(default)]
+    seal: bool,
 }
 
 #[derive(Debug, Clone)]
 pub struct Header {
     pub algorithms: Vec<Algorithm>,
     pub salt: [u8; 32],
+    pub locked: bool,
 }
 
 impl Header {
-    pub fn new(algorithms: Vec<Algorithm>, salt: [u8; 32]) -> Self {
-        Self { algorithms, salt }
+    pub fn new(algorithms: Vec<Algorithm>, salt: [u8; 32], locked: bool) -> Self {
+        Self { algorithms, salt, locked }
     }
 
     pub fn algo_codes(&self) -> String {
@@ -73,6 +76,7 @@ impl Header {
         let payload = serde_json::to_string(&EncryptedPayload {
             algo_codes: self.algo_codes(),
             salt: self.salt,
+            seal: self.locked,
         }).map_err(|e| HeaderError::JsonError(e.to_string()))?;
 
         let (encap, ct) = hybrid::encrypt(payload.as_bytes(), recipient)?;
@@ -95,7 +99,7 @@ impl Header {
             VERSION_PLAIN if parts.len() == 5 => {
                 let algorithms = parse_algos(parts[2])?;
                 let salt = parse_salt(parts[3])?;
-                let header = Self { algorithms, salt };
+                let header = Self { algorithms, salt, locked: false };
                 if parts[4] != header.compute_hash() {
                     return Err(HeaderError::HashMismatch);
                 }
@@ -131,7 +135,7 @@ impl Header {
             &hybrid::decrypt(&encap, &ct, private_key)?
         ).map_err(|e| HeaderError::JsonError(e.to_string()))?;
 
-        Ok((Self { algorithms: parse_algos(&payload.algo_codes)?, salt: payload.salt }, remaining))
+        Ok((Self { algorithms: parse_algos(&payload.algo_codes)?, salt: payload.salt, locked: payload.seal }, remaining))
     }
 
     pub fn is_encrypted(data: &[u8]) -> bool {
@@ -177,7 +181,7 @@ mod tests {
     fn test_header_roundtrip() {
         let mut salt = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut salt);
-        let header = Header::new(vec![Algorithm::Aes256, Algorithm::TripleDes, Algorithm::Twofish, Algorithm::Serpent], salt);
+        let header = Header::new(vec![Algorithm::Aes256, Algorithm::TripleDes, Algorithm::Twofish, Algorithm::Serpent], salt, false);
         let mut full = header.serialize().into_bytes();
         full.extend_from_slice(b"encrypted data here");
         let (parsed, remaining) = Header::parse(&full).unwrap();
@@ -190,7 +194,7 @@ mod tests {
     fn test_encrypted_header_roundtrip() {
         let mut salt = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut salt);
-        let header = Header::new(vec![Algorithm::Aes256, Algorithm::ChaCha20Poly1305], salt);
+        let header = Header::new(vec![Algorithm::Aes256, Algorithm::ChaCha20Poly1305], salt, false);
         let keypair = HybridKeypair::generate();
         let mut full = header.serialize_encrypted(&keypair.public).unwrap().into_bytes();
         full.extend_from_slice(b"encrypted data here");
@@ -202,14 +206,25 @@ mod tests {
     }
 
     #[test]
+    fn test_encrypted_header_with_seal() {
+        let mut salt = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut salt);
+        let header = Header::new(vec![Algorithm::Aes256], salt, true);
+        let keypair = HybridKeypair::generate();
+        let full = header.serialize_encrypted(&keypair.public).unwrap();
+        let (parsed, _) = Header::parse_encrypted(full.as_bytes(), &keypair.private).unwrap();
+        assert!(parsed.locked);
+    }
+
+    #[test]
     fn test_algo_codes() {
-        let header = Header::new(vec![Algorithm::Aes256, Algorithm::Serpent, Algorithm::Twofish], [0u8; 32]);
+        let header = Header::new(vec![Algorithm::Aes256, Algorithm::Serpent, Algorithm::Twofish], [0u8; 32], false);
         assert_eq!(header.algo_codes(), "ASW");
     }
 
     #[test]
     fn test_hash_mismatch_detection() {
-        let header = Header::new(vec![Algorithm::Aes256], [0u8; 32]);
+        let header = Header::new(vec![Algorithm::Aes256], [0u8; 32], false);
         let tampered = header.serialize().replace("|A|", "|S|");
         assert!(matches!(Header::parse(tampered.as_bytes()), Err(HeaderError::HashMismatch)));
     }
