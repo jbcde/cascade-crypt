@@ -330,12 +330,12 @@ fn load_private_key(path: &Path) -> Result<HybridPrivateKey> {
 
 fn create_progress_bar(total: u64, msg: &str) -> ProgressBar {
     let pb = ProgressBar::new(total);
-    // Nerdfont: 󰌆 = nf-md-lock, 󰦝 = nf-md-shield_lock
-    // Using smooth Unicode blocks: ━ (filled), ╾ (current), ─ (empty)
+    // Nerdfont: 󰌆 = nf-md-lock, 󰌊 = nf-md-lock_open, 󰥔 = nf-md-clock
+    // Progress bar chars: ━ (filled), ╾ (current), ─ (empty)
     let template = if msg.contains("Decrypt") {
-        "{spinner:.green} {msg:.bold.green} │{bar:40.green/dim}│ {pos}/{len} 󱎫 {elapsed}"
+        "{spinner:.green} {msg:.bold.green} │{bar:40.green/dim}│ {pos}/{len} 󰥔 {elapsed}"
     } else {
-        "{spinner:.cyan} {msg:.bold.cyan} │{bar:40.cyan/dim}│ {pos}/{len} 󱎫 {elapsed}"
+        "{spinner:.cyan} {msg:.bold.cyan} │{bar:40.cyan/dim}│ {pos}/{len} 󰥔 {elapsed}"
     };
     pb.set_style(ProgressStyle::with_template(template)
         .unwrap()
