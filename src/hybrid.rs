@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use thiserror::Error;
 use x25519_dalek::{EphemeralSecret, PublicKey as X25519Public, StaticSecret};
+use zeroize::Zeroizing;
 
 #[derive(Error, Debug)]
 pub enum HybridError {
@@ -92,16 +93,16 @@ impl HybridKeypair {
 }
 
 /// Derive a symmetric key from X25519 and Kyber shared secrets
-fn derive_symmetric_key(x25519_shared: &[u8], kyber_shared: &[u8]) -> [u8; 32] {
+fn derive_symmetric_key(x25519_shared: &[u8], kyber_shared: &[u8]) -> Zeroizing<[u8; 32]> {
     // Combine both shared secrets
-    let mut combined = Vec::with_capacity(x25519_shared.len() + kyber_shared.len());
+    let mut combined = Zeroizing::new(Vec::with_capacity(x25519_shared.len() + kyber_shared.len()));
     combined.extend_from_slice(x25519_shared);
     combined.extend_from_slice(kyber_shared);
 
     // Use HKDF to derive final key
     let hk = Hkdf::<Sha256>::new(Some(b"cascade-crypt-hybrid"), &combined);
-    let mut key = [0u8; 32];
-    hk.expand(b"header-encryption", &mut key)
+    let mut key = Zeroizing::new([0u8; 32]);
+    hk.expand(b"header-encryption", key.as_mut())
         .expect("32 bytes is valid for HKDF");
     key
 }
@@ -130,7 +131,7 @@ pub fn encrypt(plaintext: &[u8], recipient_public: &HybridPublicKey) -> Result<(
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     // Encrypt plaintext with ChaCha20-Poly1305
-    let cipher = ChaCha20Poly1305::new_from_slice(&symmetric_key)
+    let cipher = ChaCha20Poly1305::new_from_slice(symmetric_key.as_slice())
         .map_err(|e| HybridError::Encryption(e.to_string()))?;
     let ciphertext = cipher
         .encrypt(nonce, plaintext)
@@ -167,7 +168,7 @@ pub fn decrypt(
     let symmetric_key = derive_symmetric_key(x25519_shared.as_bytes(), kyber_shared.as_bytes());
 
     // Decrypt with ChaCha20-Poly1305
-    let cipher = ChaCha20Poly1305::new_from_slice(&symmetric_key)
+    let cipher = ChaCha20Poly1305::new_from_slice(symmetric_key.as_slice())
         .map_err(|e| HybridError::Decryption(e.to_string()))?;
     let nonce = Nonce::from_slice(&encapsulated.nonce);
 

@@ -4,7 +4,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use rand::seq::SliceRandom;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use cascade_crypt::{
     decrypt, decrypt_protected, decrypt_protected_with_progress, decrypt_with_progress,
@@ -285,7 +285,7 @@ fn get_password(cli: &Cli) -> Result<Vec<u8>> {
     Ok(password.into_bytes())
 }
 
-fn read_input(path: &PathBuf) -> Result<Vec<u8>> {
+fn read_input(path: &Path) -> Result<Vec<u8>> {
     if path.as_os_str() == "-" {
         let mut data = Vec::new();
         io::stdin()
@@ -293,30 +293,30 @@ fn read_input(path: &PathBuf) -> Result<Vec<u8>> {
             .context("Failed to read from stdin")?;
         Ok(data)
     } else {
-        fs::read(path).with_context(|| format!("Failed to read input file: {:?}", path))
+        fs::read(path).with_context(|| format!("Failed to read input file: {}", path.display()))
     }
 }
 
-fn write_output(path: &PathBuf, data: &[u8]) -> Result<()> {
+fn write_output(path: &Path, data: &[u8]) -> Result<()> {
     if path.as_os_str() == "-" {
         io::stdout()
             .write_all(data)
             .context("Failed to write to stdout")?;
     } else {
-        fs::write(path, data).with_context(|| format!("Failed to write output file: {:?}", path))?;
+        fs::write(path, data).with_context(|| format!("Failed to write output file: {}", path.display()))?;
     }
     Ok(())
 }
 
-fn load_public_key(path: &PathBuf) -> Result<HybridPublicKey> {
+fn load_public_key(path: &Path) -> Result<HybridPublicKey> {
     let json = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read public key file: {:?}", path))?;
+        .with_context(|| format!("Failed to read public key file: {}", path.display()))?;
     HybridPublicKey::from_json(&json).context("Failed to parse public key")
 }
 
-fn load_private_key(path: &PathBuf) -> Result<HybridPrivateKey> {
+fn load_private_key(path: &Path) -> Result<HybridPrivateKey> {
     let json = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read private key file: {:?}", path))?;
+        .with_context(|| format!("Failed to read private key file: {}", path.display()))?;
 
     // Try parsing as full keypair first, then as just private key
     if let Ok(keypair) = HybridKeypair::from_json(&json) {
@@ -426,17 +426,15 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             } else {
                 decrypt_protected(&input_data, &password, &private_key).context("Decryption failed")?
             }
+        } else if show_progress {
+            let pb = create_progress_bar(100, "󰌊 Decrypting");
+            let result = decrypt_with_progress(&input_data, &password, |cur, total| {
+                pb.set_length(total as u64); pb.set_position(cur as u64);
+            }).context("Decryption failed")?;
+            pb.finish();
+            result
         } else {
-            if show_progress {
-                let pb = create_progress_bar(100, "󰌊 Decrypting");
-                let result = decrypt_with_progress(&input_data, &password, |cur, total| {
-                    pb.set_length(total as u64); pb.set_position(cur as u64);
-                }).context("Decryption failed")?;
-                pb.finish();
-                result
-            } else {
-                decrypt(&input_data, &password).context("Decryption failed")?
-            }
+            decrypt(&input_data, &password).context("Decryption failed")?
         }
     } else {
         // Encrypt mode - get algorithms
@@ -503,17 +501,15 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             }
         } else if cli.lock {
             anyhow::bail!("--lock requires --pubkey for protected header encryption");
+        } else if show_progress {
+            let pb = create_progress_bar(algo_count as u64, "󰌆 Encrypting");
+            let result = encrypt_with_progress(&input_data, &password, algorithms, |cur, total| {
+                pb.set_length(total as u64); pb.set_position(cur as u64);
+            }).context("Encryption failed")?;
+            pb.finish();
+            result
         } else {
-            if show_progress {
-                let pb = create_progress_bar(algo_count as u64, "󰌆 Encrypting");
-                let result = encrypt_with_progress(&input_data, &password, algorithms, |cur, total| {
-                    pb.set_length(total as u64); pb.set_position(cur as u64);
-                }).context("Encryption failed")?;
-                pb.finish();
-                result
-            } else {
-                encrypt(&input_data, &password, algorithms).context("Encryption failed")?
-            }
+            encrypt(&input_data, &password, algorithms).context("Encryption failed")?
         }
     };
 

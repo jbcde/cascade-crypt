@@ -3,6 +3,7 @@ use rand::RngCore;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 use crate::crypto::{self, Algorithm, CryptoError};
 use crate::encoder;
@@ -40,13 +41,13 @@ pub enum CascadeError {
     PrivateKeyRequired,
 }
 
-fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm) -> Result<Vec<u8>, CascadeError> {
+fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm) -> Result<Zeroizing<Vec<u8>>, CascadeError> {
     let argon2 = Argon2::default();
     let mut full_salt = Vec::with_capacity(salt.len() + algo.salt_context().len());
     full_salt.extend_from_slice(salt);
     full_salt.extend_from_slice(algo.salt_context());
 
-    let mut key = vec![0u8; algo.key_size()];
+    let mut key = Zeroizing::new(vec![0u8; algo.key_size()]);
     argon2
         .hash_password_into(password, &full_salt, &mut key)
         .map_err(|_| CascadeError::KeyDerivation)?;
@@ -57,7 +58,7 @@ fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm) -> Result<Vec<u8>, 
 fn encrypt_layers<F>(data: &[u8], password: &[u8], algorithms: &[Algorithm], salt: &[u8], mut progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
     let total = algorithms.len();
-    let mut key_cache: HashMap<Algorithm, Vec<u8>> = HashMap::new();
+    let mut key_cache: HashMap<Algorithm, Zeroizing<Vec<u8>>> = HashMap::new();
     let mut current = encoder::encode(data).into_bytes();
     for (i, algo) in algorithms.iter().enumerate() {
         let key = match key_cache.entry(*algo) {
@@ -131,12 +132,12 @@ fn decrypt_layers<F>(header: &Header, encrypted_data: &[u8], password: &[u8], mu
 where F: FnMut(usize, usize) {
     if header.algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
     let total = header.algorithms.len();
-    let mut key_cache: HashMap<Algorithm, Vec<u8>> = HashMap::new();
+    let mut key_cache: HashMap<Algorithm, Zeroizing<Vec<u8>>> = HashMap::new();
     let mut current = encrypted_data.to_vec();
     for (i, algo) in header.algorithms.iter().rev().enumerate() {
         let key = match key_cache.entry(*algo) {
             Entry::Occupied(e) => e.into_mut(),
-            Entry::Vacant(e) => e.insert(derive_key(password, &header.salt, *algo)?),
+            Entry::Vacant(e) => e.insert(derive_key(password, header.salt.as_slice(), *algo)?),
         };
         current = crypto::decrypt(*algo, key, &current)?;
         progress(i + 1, total);

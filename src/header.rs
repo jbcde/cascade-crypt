@@ -61,7 +61,7 @@ impl Header {
     fn compute_hash(&self) -> String {
         let mut h = Sha256::new();
         h.update(self.algo_codes().as_bytes());
-        h.update(&self.salt);
+        h.update(self.salt);
         hex::encode(&h.finalize()[..16])
     }
 
@@ -148,8 +148,10 @@ impl Header {
 fn parse_header_line(data: &[u8]) -> Result<(Vec<&str>, &[u8]), HeaderError> {
     let end = data.iter().position(|&b| b == b'\n').ok_or(HeaderError::InvalidFormat)?;
     let s = std::str::from_utf8(&data[..end]).map_err(|_| HeaderError::InvalidFormat)?;
-    if !s.starts_with('[') || !s.ends_with(']') { return Err(HeaderError::InvalidFormat); }
-    Ok((s[1..s.len()-1].split('|').collect(), &data[end + 1..]))
+    let inner = s.strip_prefix('[')
+        .and_then(|s| s.strip_suffix(']'))
+        .ok_or(HeaderError::InvalidFormat)?;
+    Ok((inner.split('|').collect(), &data[end + 1..]))
 }
 
 fn parse_algos(s: &str) -> Result<Vec<Algorithm>, HeaderError> {
@@ -174,7 +176,7 @@ mod hex {
     }
 
     pub fn decode(s: &str) -> Result<Vec<u8>, ()> {
-        if s.len() % 2 != 0 { return Err(()); }
+        if !s.len().is_multiple_of(2) { return Err(()); }
         s.as_bytes().chunks(2).map(|c| {
             let hi = match c[0] { b'0'..=b'9' => c[0] - b'0', b'a'..=b'f' => c[0] - b'a' + 10, b'A'..=b'F' => c[0] - b'A' + 10, _ => return Err(()) };
             let lo = match c[1] { b'0'..=b'9' => c[1] - b'0', b'a'..=b'f' => c[1] - b'a' + 10, b'A'..=b'F' => c[1] - b'A' + 10, _ => return Err(()) };
