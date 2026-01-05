@@ -94,7 +94,7 @@ impl HybridKeypair {
 }
 
 /// Derive a symmetric key from X25519 and Kyber shared secrets
-fn derive_symmetric_key(x25519_shared: &[u8], kyber_shared: &[u8]) -> Zeroizing<[u8; 32]> {
+fn derive_symmetric_key(x25519_shared: &[u8], kyber_shared: &[u8]) -> Result<Zeroizing<[u8; 32]>, HybridError> {
     // Combine both shared secrets
     let mut combined = Zeroizing::new(Vec::with_capacity(x25519_shared.len() + kyber_shared.len()));
     combined.extend_from_slice(x25519_shared);
@@ -104,8 +104,8 @@ fn derive_symmetric_key(x25519_shared: &[u8], kyber_shared: &[u8]) -> Zeroizing<
     let hk = Hkdf::<Sha256>::new(Some(b"cascade-crypt-hybrid"), &combined);
     let mut key = Zeroizing::new([0u8; 32]);
     hk.expand(b"header-encryption", key.as_mut())
-        .expect("32 bytes is valid for HKDF");
-    key
+        .map_err(|_| HybridError::KeyGeneration)?;
+    Ok(key)
 }
 
 /// Encrypt data using hybrid X25519 + Kyber1024
@@ -124,7 +124,7 @@ pub fn encrypt(plaintext: &[u8], recipient_public: &HybridPublicKey) -> Result<(
     let (kyber_shared, kyber_ciphertext) = kyber1024::encapsulate(&kyber_pk);
 
     // Derive symmetric key from both shared secrets
-    let symmetric_key = derive_symmetric_key(x25519_shared.as_bytes(), kyber_shared.as_bytes());
+    let symmetric_key = derive_symmetric_key(x25519_shared.as_bytes(), kyber_shared.as_bytes())?;
 
     // Generate nonce
     let mut nonce_bytes = [0u8; 12];
@@ -166,7 +166,7 @@ pub fn decrypt(
     let kyber_shared = kyber1024::decapsulate(&kyber_ct, &kyber_sk);
 
     // Derive symmetric key from both shared secrets
-    let symmetric_key = derive_symmetric_key(x25519_shared.as_bytes(), kyber_shared.as_bytes());
+    let symmetric_key = derive_symmetric_key(x25519_shared.as_bytes(), kyber_shared.as_bytes())?;
 
     // Decrypt with ChaCha20-Poly1305
     let cipher = ChaCha20Poly1305::new_from_slice(symmetric_key.as_slice())
