@@ -4,7 +4,7 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.2.1] - 2025-01-09
+## [0.2.1] - 2026-01-09
 
 ### Added
 - Ciphertext integrity verification via SHA-256 hash in header
