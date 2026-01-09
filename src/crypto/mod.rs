@@ -363,63 +363,6 @@ fn ascon_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> 
     cipher.decrypt(&nonce_arr.into(), data).map_err(|e| CryptoError::DecryptionFailed(e.to_string()))
 }
 
-// Custom implementation for Threefish256 (uses cipher 0.2 API)
-macro_rules! threefish_impl {
-    () => {{
-        use threefish_cipher::{Threefish256, NewBlockCipher, BlockCipher};
-        use cipher::generic_array::GenericArray;
-        const BLOCK_SIZE: usize = 32;
-
-        fn enc(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-            if key.len() != BLOCK_SIZE { return Err(CryptoError::InvalidKeyLength { expected: BLOCK_SIZE, got: key.len() }); }
-            let cipher = Threefish256::new(GenericArray::from_slice(key));
-            let mut iv = [0u8; BLOCK_SIZE];
-            rand::thread_rng().fill_bytes(&mut iv);
-            let padding_len = BLOCK_SIZE - (plaintext.len() % BLOCK_SIZE);
-            let mut buffer = vec![padding_len as u8; plaintext.len() + padding_len];
-            buffer[..plaintext.len()].copy_from_slice(plaintext);
-            let mut prev = iv;
-            for chunk in buffer.chunks_mut(BLOCK_SIZE) {
-                for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
-                let mut block = GenericArray::clone_from_slice(chunk);
-                cipher.encrypt_block(&mut block);
-                chunk.copy_from_slice(&block);
-                prev.copy_from_slice(chunk);
-            }
-            let mut result = Vec::with_capacity(BLOCK_SIZE + buffer.len());
-            result.extend_from_slice(&iv);
-            result.extend(buffer);
-            Ok(result)
-        }
-
-        fn dec(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-            if key.len() != BLOCK_SIZE { return Err(CryptoError::InvalidKeyLength { expected: BLOCK_SIZE, got: key.len() }); }
-            if ciphertext.len() < BLOCK_SIZE { return Err(CryptoError::InvalidNonce); }
-            let cipher = Threefish256::new(GenericArray::from_slice(key));
-            let (iv, data) = ciphertext.split_at(BLOCK_SIZE);
-            let mut buffer = data.to_vec();
-            let mut prev = [0u8; BLOCK_SIZE];
-            prev.copy_from_slice(iv);
-            for chunk in buffer.chunks_mut(BLOCK_SIZE) {
-                let mut ct_backup = [0u8; BLOCK_SIZE];
-                ct_backup.copy_from_slice(chunk);
-                let mut block = GenericArray::clone_from_slice(chunk);
-                cipher.decrypt_block(&mut block);
-                chunk.copy_from_slice(&block);
-                for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
-                prev = ct_backup;
-            }
-            let padding_len = *buffer.last().ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))? as usize;
-            if padding_len == 0 || padding_len > BLOCK_SIZE || padding_len > buffer.len() || !buffer[buffer.len() - padding_len..].iter().all(|&b| b == padding_len as u8) {
-                return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
-            }
-            buffer.truncate(buffer.len() - padding_len);
-            Ok(buffer)
-        }
-
-        (enc as CipherFn, dec as CipherFn)
-    }};
-}
 
 pub fn encrypt(algo: Algorithm, key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
     let (enc, _) = get_cipher_fns(algo);
@@ -447,7 +390,7 @@ fn get_cipher_fns(algo: Algorithm) -> (CipherFn, CipherFn) {
         Algorithm::Sm4 => cbc_impl!(sm4::Sm4, 16, 16, 16),
         Algorithm::Kuznyechik => cbc_impl!(kuznyechik::Kuznyechik, 32, 16, 16),
         Algorithm::Seed => cbc_impl!(kisaseed::SEED, 16, 16, 16),
-        Algorithm::Threefish256 => threefish_impl!(),
+        Algorithm::Threefish256 => cipher05_cbc_impl!(threefish::Threefish256, 32, 32),
         Algorithm::Rc6 => cipher05_cbc_impl!(rc6::RC6_32_20_16, 16, 16),
         Algorithm::Magma => cipher05_cbc_impl!(magma::Magma, 32, 8),
         Algorithm::Speck128_256 => cipher05_cbc_impl!(speck_cipher::Speck128_256, 32, 16),
