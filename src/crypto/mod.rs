@@ -462,7 +462,7 @@ mod tests {
 
     fn test_roundtrip(algo: Algorithm) {
         let key = vec![0x42u8; algo.key_size()];
-        let plaintext = b"Hello, cascade-crypt!";
+        let plaintext = b"Hello, cascrypt!";
         let encrypted = encrypt(algo, &key, plaintext).unwrap();
         let decrypted = decrypt(algo, &key, &encrypted).unwrap();
         assert_eq!(plaintext.as_slice(), decrypted.as_slice());

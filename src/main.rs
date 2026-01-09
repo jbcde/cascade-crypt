@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::seq::SliceRandom;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -18,7 +19,38 @@ fn init_thread_pool() {
         .ok();
 }
 
-use cascade_crypt::{
+/// All algorithm short flag characters
+const ALGO_CHARS: [char; 20] = [
+    'A', 'T', 'W', 'S', 'C', 'X', 'M', 'B', 'F', 'I',
+    'R', '4', 'K', 'E', '3', '6', 'G', 'P', 'J', 'N',
+];
+
+/// Expand combined short flags like -ABC into -A -B -C
+/// This allows users to write `-ASC` instead of `-A -S -C`
+fn expand_combined_flags(args: Vec<String>) -> Vec<String> {
+    let algo_set: HashSet<char> = ALGO_CHARS.into_iter().collect();
+    let mut result = Vec::with_capacity(args.len());
+
+    for arg in args {
+        // Check if this is a short flag group (starts with - but not --)
+        // and has more than one character after the dash
+        if arg.starts_with('-') && !arg.starts_with("--") && arg.len() > 2 {
+            let chars: Vec<char> = arg[1..].chars().collect();
+            // Only expand if ALL characters are algorithm flags
+            if chars.iter().all(|c| algo_set.contains(c)) {
+                for c in chars {
+                    result.push(format!("-{}", c));
+                }
+                continue;
+            }
+        }
+        result.push(arg);
+    }
+
+    result
+}
+
+use cascrypt::{
     decrypt, decrypt_protected, decrypt_protected_with_progress, decrypt_with_progress,
     encrypt, encrypt_protected, encrypt_protected_with_progress, encrypt_with_progress,
     Algorithm, HybridKeypair, HybridPrivateKey, HybridPublicKey,
@@ -48,7 +80,7 @@ const ALL_ALGORITHMS: [Algorithm; 20] = [
 ];
 
 #[derive(Parser, Debug)]
-#[command(name = "cascade-crypt")]
+#[command(name = "cascrypt")]
 #[command(author, version, about = "Cascading binary encryption tool")]
 #[command(long_about = "Encrypt binary files using multiple layered encryption algorithms.\n\n\
     Encryption algorithms are applied in the order specified on the command line.\n\
@@ -217,34 +249,77 @@ enum Commands {
     },
 }
 
+/// Map a character to its corresponding Algorithm
+fn char_to_algorithm(c: char) -> Option<Algorithm> {
+    match c {
+        'A' => Some(Algorithm::Aes256),
+        'T' => Some(Algorithm::TripleDes),
+        'W' => Some(Algorithm::Twofish),
+        'S' => Some(Algorithm::Serpent),
+        'C' => Some(Algorithm::ChaCha20Poly1305),
+        'X' => Some(Algorithm::XChaCha20Poly1305),
+        'M' => Some(Algorithm::Camellia),
+        'B' => Some(Algorithm::Blowfish),
+        'F' => Some(Algorithm::Cast5),
+        'I' => Some(Algorithm::Idea),
+        'R' => Some(Algorithm::Aria),
+        '4' => Some(Algorithm::Sm4),
+        'K' => Some(Algorithm::Kuznyechik),
+        'E' => Some(Algorithm::Seed),
+        '3' => Some(Algorithm::Threefish256),
+        '6' => Some(Algorithm::Rc6),
+        'G' => Some(Algorithm::Magma),
+        'P' => Some(Algorithm::Speck128_256),
+        'J' => Some(Algorithm::Gift128),
+        'N' => Some(Algorithm::Ascon128),
+        _ => None,
+    }
+}
+
 /// Parse algorithm flags in the order they appear in argv
+/// Supports both individual flags (-A -S -C) and combined flags (-ASC)
 fn parse_algorithms_in_order() -> Vec<Algorithm> {
     let args: Vec<String> = std::env::args().collect();
+    let algo_set: HashSet<char> = ALGO_CHARS.into_iter().collect();
     let mut algorithms = Vec::new();
 
     for arg in &args {
+        // Handle long flags
         match arg.as_str() {
-            "-A" | "--aes" => algorithms.push(Algorithm::Aes256),
-            "-T" | "--3des" => algorithms.push(Algorithm::TripleDes),
-            "-W" | "--twofish" => algorithms.push(Algorithm::Twofish),
-            "-S" | "--serpent" => algorithms.push(Algorithm::Serpent),
-            "-C" | "--chacha" => algorithms.push(Algorithm::ChaCha20Poly1305),
-            "-X" | "--xchacha" => algorithms.push(Algorithm::XChaCha20Poly1305),
-            "-M" | "--camellia" => algorithms.push(Algorithm::Camellia),
-            "-B" | "--blowfish" => algorithms.push(Algorithm::Blowfish),
-            "-F" | "--cast5" => algorithms.push(Algorithm::Cast5),
-            "-I" | "--idea" => algorithms.push(Algorithm::Idea),
-            "-R" | "--aria" => algorithms.push(Algorithm::Aria),
-            "-4" | "--sm4" => algorithms.push(Algorithm::Sm4),
-            "-K" | "--kuznyechik" => algorithms.push(Algorithm::Kuznyechik),
-            "-E" | "--seed" => algorithms.push(Algorithm::Seed),
-            "-3" | "--threefish" => algorithms.push(Algorithm::Threefish256),
-            "-6" | "--rc6" => algorithms.push(Algorithm::Rc6),
-            "-G" | "--magma" => algorithms.push(Algorithm::Magma),
-            "-P" | "--speck" => algorithms.push(Algorithm::Speck128_256),
-            "-J" | "--gift" => algorithms.push(Algorithm::Gift128),
-            "-N" | "--ascon" => algorithms.push(Algorithm::Ascon128),
-            _ => {}
+            "--aes" => algorithms.push(Algorithm::Aes256),
+            "--3des" => algorithms.push(Algorithm::TripleDes),
+            "--twofish" => algorithms.push(Algorithm::Twofish),
+            "--serpent" => algorithms.push(Algorithm::Serpent),
+            "--chacha" => algorithms.push(Algorithm::ChaCha20Poly1305),
+            "--xchacha" => algorithms.push(Algorithm::XChaCha20Poly1305),
+            "--camellia" => algorithms.push(Algorithm::Camellia),
+            "--blowfish" => algorithms.push(Algorithm::Blowfish),
+            "--cast5" => algorithms.push(Algorithm::Cast5),
+            "--idea" => algorithms.push(Algorithm::Idea),
+            "--aria" => algorithms.push(Algorithm::Aria),
+            "--sm4" => algorithms.push(Algorithm::Sm4),
+            "--kuznyechik" => algorithms.push(Algorithm::Kuznyechik),
+            "--seed" => algorithms.push(Algorithm::Seed),
+            "--threefish" => algorithms.push(Algorithm::Threefish256),
+            "--rc6" => algorithms.push(Algorithm::Rc6),
+            "--magma" => algorithms.push(Algorithm::Magma),
+            "--speck" => algorithms.push(Algorithm::Speck128_256),
+            "--gift" => algorithms.push(Algorithm::Gift128),
+            "--ascon" => algorithms.push(Algorithm::Ascon128),
+            _ => {
+                // Handle short flags: both single (-A) and combined (-ASC)
+                if arg.starts_with('-') && !arg.starts_with("--") {
+                    let chars: Vec<char> = arg[1..].chars().collect();
+                    // Only process if all chars are algorithm flags
+                    if chars.iter().all(|c| algo_set.contains(c)) {
+                        for c in chars {
+                            if let Some(algo) = char_to_algorithm(c) {
+                                algorithms.push(algo);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -542,7 +617,9 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
 
 fn main() -> Result<()> {
     init_thread_pool();
-    let cli = Cli::parse();
+    let args: Vec<String> = std::env::args().collect();
+    let expanded_args = expand_combined_flags(args);
+    let cli = Cli::parse_from(expanded_args);
 
     match &cli.command {
         Some(Commands::Keygen {
