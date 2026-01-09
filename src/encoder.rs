@@ -18,7 +18,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip() {
-        let original = b"Hello, cascade-crypt!";
+        let original = b"Hello, cascrypt!";
         let encoded = encode(original);
         let decoded = decode(&encoded).unwrap();
         assert_eq!(original.as_slice(), decoded.as_slice());

@@ -101,7 +101,7 @@ fn derive_symmetric_key(x25519_shared: &[u8], kyber_shared: &[u8]) -> Result<Zer
     combined.extend_from_slice(kyber_shared);
 
     // Use HKDF to derive final key
-    let hk = Hkdf::<Sha256>::new(Some(b"cascade-crypt-hybrid"), &combined);
+    let hk = Hkdf::<Sha256>::new(Some(b"cascrypt-hybrid"), &combined);
     let mut key = Zeroizing::new([0u8; 32]);
     hk.expand(b"header-encryption", key.as_mut())
         .map_err(|_| HybridError::KeyGeneration)?;

@@ -7,12 +7,12 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::path::PathBuf;
 
-/// Get path to the cascade-crypt binary
+/// Get path to the cascrypt binary
 fn binary_path() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     path.push("target");
     path.push("debug");
-    path.push("cascade-crypt");
+    path.push("cascrypt");
     path
 }
 

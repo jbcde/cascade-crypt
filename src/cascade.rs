@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn test_single_algorithm() {
-        let data = b"Hello, cascade-crypt!";
+        let data = b"Hello, cascrypt!";
         let password = b"test-password";
         let encrypted = encrypt(data, password, vec![Algorithm::Aes256]).unwrap();
         let decrypted = decrypt(&encrypted, password).unwrap();
