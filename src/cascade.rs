@@ -1,8 +1,6 @@
 use argon2::Argon2;
 use rand::RngCore;
 use rayon::prelude::*;
-use std::collections::HashMap;
-use std::collections::HashSet;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
@@ -44,11 +42,12 @@ pub enum CascadeError {
     PrivateKeyRequired,
 }
 
-fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm) -> Result<Zeroizing<Vec<u8>>, CascadeError> {
+fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm, layer: usize) -> Result<Zeroizing<Vec<u8>>, CascadeError> {
     let argon2 = Argon2::default();
-    let mut full_salt = Vec::with_capacity(salt.len() + algo.salt_context().len());
+    let mut full_salt = Vec::with_capacity(salt.len() + algo.salt_context().len() + 8);
     full_salt.extend_from_slice(salt);
     full_salt.extend_from_slice(algo.salt_context());
+    full_salt.extend_from_slice(&(layer as u64).to_le_bytes());
 
     let mut key = Zeroizing::new(vec![0u8; algo.key_size()]);
     argon2
@@ -57,16 +56,16 @@ fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm) -> Result<Zeroizing
     Ok(key)
 }
 
-/// Derive keys for all unique algorithms in parallel
+/// Derive keys for each layer in parallel (unique key per layer position)
 fn derive_keys_parallel(
     password: &[u8],
     salt: &[u8],
     algorithms: &[Algorithm],
-) -> Result<HashMap<Algorithm, Zeroizing<Vec<u8>>>, CascadeError> {
-    let unique: HashSet<Algorithm> = algorithms.iter().copied().collect();
-    unique
-        .into_par_iter()
-        .map(|algo| derive_key(password, salt, algo).map(|key| (algo, key)))
+) -> Result<Vec<Zeroizing<Vec<u8>>>, CascadeError> {
+    algorithms
+        .par_iter()
+        .enumerate()
+        .map(|(i, algo)| derive_key(password, salt, *algo, i))
         .collect()
 }
 
@@ -77,7 +76,7 @@ where F: FnMut(usize, usize) {
     let encoded = encoder::encode(data).into_bytes();
     let mut current = Zeroizing::new(if locked { _t::_x(&encoded) } else { encoded });
     for (i, algo) in algorithms.iter().enumerate() {
-        let key = &keys[algo];
+        let key = &keys[i];
         current = Zeroizing::new(crypto::encrypt(*algo, key, &current)?);
         progress(i + 1, total);
     }
@@ -96,7 +95,7 @@ where F: FnMut(usize, usize) {
     let mut salt = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut salt);
     let encrypted = encrypt_layers(data, password, &algorithms, &salt, false, progress)?;
-    let mut result = Header::new(algorithms, salt, false).serialize().into_bytes();
+    let mut result = Header::with_ciphertext(algorithms, salt, false, &encrypted).serialize().into_bytes();
     result.extend(encrypted);
     Ok(result)
 }
@@ -113,7 +112,7 @@ where F: FnMut(usize, usize) {
     let mut salt = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut salt);
     let encrypted = encrypt_layers(data, password, &algorithms, &salt, locked, progress)?;
-    let mut result = Header::new(algorithms, salt, locked).serialize_encrypted(recipient_public)?.into_bytes();
+    let mut result = Header::with_ciphertext(algorithms, salt, locked, &encrypted).serialize_encrypted(recipient_public)?.into_bytes();
     result.extend(encrypted);
     Ok(result)
 }
@@ -128,6 +127,7 @@ pub fn decrypt_with_progress<F>(data: &[u8], password: &[u8], progress: F) -> Re
 where F: FnMut(usize, usize) {
     if Header::is_encrypted(data) { return Err(CascadeError::PrivateKeyRequired); }
     let (header, encrypted_data) = Header::parse(data)?;
+    header.verify_ciphertext(encrypted_data)?;
     decrypt_layers(&header, encrypted_data, password, progress)
 }
 
@@ -144,6 +144,7 @@ where F: FnMut(usize, usize) {
     } else {
         Header::parse(data)?
     };
+    header.verify_ciphertext(encrypted_data)?;
     decrypt_layers(&header, encrypted_data, password, progress)
 }
 
@@ -154,7 +155,9 @@ where F: FnMut(usize, usize) {
     let keys = derive_keys_parallel(password, &header.salt, &header.algorithms)?;
     let mut current = Zeroizing::new(encrypted_data.to_vec());
     for (i, algo) in header.algorithms.iter().rev().enumerate() {
-        let key = &keys[algo];
+        // Map reverse iteration index back to original layer index
+        let key_index = total - 1 - i;
+        let key = &keys[key_index];
         current = Zeroizing::new(crypto::decrypt(*algo, key, &current)?);
         progress(i + 1, total);
     }
@@ -268,5 +271,47 @@ mod tests {
         assert_eq!(_t::_x(a), b);
         assert_eq!(_t::_x(b), a);
         assert_eq!(_t::_x(&_t::_x(a)), a);
+    }
+
+    #[test]
+    fn test_ciphertext_tampering_detected() {
+        let data = b"Secret data";
+        let password = b"test-password";
+        let mut encrypted = encrypt(data, password, vec![Algorithm::Aes256]).unwrap();
+        // Tamper with ciphertext (last byte)
+        let len = encrypted.len();
+        encrypted[len - 1] ^= 0xFF;
+        // Decryption should fail with ciphertext hash mismatch
+        let result = decrypt(&encrypted, password);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_protected_ciphertext_tampering_detected() {
+        let data = b"Secret data";
+        let password = b"test-password";
+        let keypair = HybridKeypair::generate();
+        let mut encrypted = encrypt_protected(data, password, vec![Algorithm::Aes256], &keypair.public, false).unwrap();
+        // Tamper with ciphertext (last byte)
+        let len = encrypted.len();
+        encrypted[len - 1] ^= 0xFF;
+        // Decryption should fail with ciphertext hash mismatch
+        let result = decrypt_protected(&encrypted, password, &keypair.private);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_duplicate_algorithms_different_keys() {
+        // Test that duplicate algorithms in cascade get different keys per layer
+        let data = b"Testing duplicate algorithm layers";
+        let password = b"test-password";
+        // Use same algorithm 3 times - each layer should get a unique key
+        let encrypted = encrypt(
+            data,
+            password,
+            vec![Algorithm::Aes256, Algorithm::Aes256, Algorithm::Aes256],
+        ).unwrap();
+        let decrypted = decrypt(&encrypted, password).unwrap();
+        assert_eq!(data.as_slice(), decrypted.as_slice());
     }
 }
