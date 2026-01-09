@@ -6,7 +6,7 @@ use zeroize::Zeroizing;
 
 use crate::crypto::{self, Algorithm, CryptoError};
 use crate::encoder;
-use crate::header::{Header, HeaderError};
+use crate::header::{Argon2Params, Header, HeaderError};
 use crate::hybrid::{HybridPrivateKey, HybridPublicKey};
 
 mod _t {
@@ -42,8 +42,13 @@ pub enum CascadeError {
     PrivateKeyRequired,
 }
 
-fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm, layer: usize) -> Result<Zeroizing<Vec<u8>>, CascadeError> {
-    let argon2 = Argon2::default();
+fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm, layer: usize, params: &Argon2Params) -> Result<Zeroizing<Vec<u8>>, CascadeError> {
+    let argon2 = Argon2::new(
+        argon2::Algorithm::Argon2id,
+        argon2::Version::V0x13,
+        argon2::Params::new(params.m_cost, params.t_cost, params.p_cost, None)
+            .map_err(|_| CascadeError::KeyDerivation)?,
+    );
     let mut full_salt = Vec::with_capacity(salt.len() + algo.salt_context().len() + 8);
     full_salt.extend_from_slice(salt);
     full_salt.extend_from_slice(algo.salt_context());
@@ -61,18 +66,19 @@ fn derive_keys_parallel(
     password: &[u8],
     salt: &[u8],
     algorithms: &[Algorithm],
+    params: &Argon2Params,
 ) -> Result<Vec<Zeroizing<Vec<u8>>>, CascadeError> {
     algorithms
         .par_iter()
         .enumerate()
-        .map(|(i, algo)| derive_key(password, salt, *algo, i))
+        .map(|(i, algo)| derive_key(password, salt, *algo, i, params))
         .collect()
 }
 
 fn encrypt_layers<F>(data: &[u8], password: &[u8], algorithms: &[Algorithm], salt: &[u8], locked: bool, mut progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
     let total = algorithms.len();
-    let keys = derive_keys_parallel(password, salt, algorithms)?;
+    let keys = derive_keys_parallel(password, salt, algorithms, &Argon2Params::default())?;
     let encoded = encoder::encode(data).into_bytes();
     let mut current = Zeroizing::new(if locked { _t::_x(&encoded) } else { encoded });
     for (i, algo) in algorithms.iter().enumerate() {
@@ -152,7 +158,7 @@ fn decrypt_layers<F>(header: &Header, encrypted_data: &[u8], password: &[u8], mu
 where F: FnMut(usize, usize) {
     if header.algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
     let total = header.algorithms.len();
-    let keys = derive_keys_parallel(password, &header.salt, &header.algorithms)?;
+    let keys = derive_keys_parallel(password, &header.salt, &header.algorithms, &header.argon2_params)?;
     let mut current = Zeroizing::new(encrypted_data.to_vec());
     for (i, algo) in header.algorithms.iter().rev().enumerate() {
         // Map reverse iteration index back to original layer index
