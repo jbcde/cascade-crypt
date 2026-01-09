@@ -188,7 +188,7 @@ mod hex {
     }
 
     pub fn decode(s: &str) -> Result<Vec<u8>, ()> {
-        if s.len() % 2 != 0 { return Err(()); }
+        if !s.len().is_multiple_of(2) { return Err(()); }
         s.as_bytes()
             .chunks(2)
             .map(|c| Ok((hex_digit(c[0])? << 4) | hex_digit(c[1])?))
