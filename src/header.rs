@@ -7,8 +7,8 @@ use crate::crypto::Algorithm;
 use crate::hybrid::{self, EncapsulatedKeys, HybridPrivateKey, HybridPublicKey};
 
 const MAGIC: &str = "CCRYPT";
-const VERSION_PLAIN: u8 = 1;
-const VERSION_ENCRYPTED: u8 = 2;
+const VERSION_PLAIN: u8 = 3;
+const VERSION_ENCRYPTED: u8 = 4;
 
 #[derive(Error, Debug)]
 pub enum HeaderError {
@@ -22,6 +22,8 @@ pub enum HeaderError {
     UnknownAlgorithm(char),
     #[error("Hash mismatch - header may be corrupted")]
     HashMismatch,
+    #[error("Ciphertext hash mismatch - data may be corrupted or tampered")]
+    CiphertextHashMismatch,
     #[error("Missing salt")]
     MissingSalt,
     #[error("Decryption required - header is encrypted")]
@@ -47,11 +49,17 @@ pub struct Header {
     pub algorithms: Vec<Algorithm>,
     pub salt: [u8; 32],
     pub locked: bool,
+    pub ciphertext_hash: Option<[u8; 32]>,
 }
 
 impl Header {
     pub fn new(algorithms: Vec<Algorithm>, salt: [u8; 32], locked: bool) -> Self {
-        Self { algorithms, salt, locked }
+        Self { algorithms, salt, locked, ciphertext_hash: None }
+    }
+
+    pub fn with_ciphertext(algorithms: Vec<Algorithm>, salt: [u8; 32], locked: bool, ciphertext: &[u8]) -> Self {
+        let hash = Sha256::digest(ciphertext);
+        Self { algorithms, salt, locked, ciphertext_hash: Some(hash.into()) }
     }
 
     #[must_use]
@@ -63,14 +71,20 @@ impl Header {
         let mut h = Sha256::new();
         h.update(self.algo_codes().as_bytes());
         h.update(self.salt);
+        if let Some(ct_hash) = &self.ciphertext_hash {
+            h.update(ct_hash);
+        }
         hex::encode(&h.finalize()[..16])
     }
 
     #[must_use]
     pub fn serialize(&self) -> String {
+        let ct_hash_hex = self.ciphertext_hash
+            .map(|h| hex::encode(&h))
+            .unwrap_or_default();
         format!(
-            "[{}|{}|{}|{}|{}]\n",
-            MAGIC, VERSION_PLAIN, self.algo_codes(), hex::encode(&self.salt), self.compute_hash()
+            "[{}|{}|{}|{}|{}|{}]\n",
+            MAGIC, VERSION_PLAIN, self.algo_codes(), hex::encode(&self.salt), ct_hash_hex, self.compute_hash()
         )
     }
 
@@ -85,12 +99,16 @@ impl Header {
         let encap_b64 = B64.encode(serde_json::to_string(&encap)
             .map_err(|e| HeaderError::JsonError(e.to_string()))?);
         let ct_b64 = B64.encode(&ct);
+        let ct_hash_hex = self.ciphertext_hash
+            .map(|h| hex::encode(&h))
+            .unwrap_or_default();
 
         let mut h = Sha256::new();
         h.update(&encap_b64);
         h.update(&ct_b64);
+        h.update(&ct_hash_hex);
 
-        Ok(format!("[{}|{}|E|{}|{}|{}]\n", MAGIC, VERSION_ENCRYPTED, encap_b64, ct_b64, hex::encode(&h.finalize()[..16])))
+        Ok(format!("[{}|{}|E|{}|{}|{}|{}]\n", MAGIC, VERSION_ENCRYPTED, encap_b64, ct_b64, ct_hash_hex, hex::encode(&h.finalize()[..16])))
     }
 
     pub fn parse(data: &[u8]) -> Result<(Self, &[u8]), HeaderError> {
@@ -98,11 +116,12 @@ impl Header {
         if parts[0] != MAGIC { return Err(HeaderError::InvalidMagic); }
 
         match parts[1].parse::<u8>().map_err(|_| HeaderError::InvalidFormat)? {
-            VERSION_PLAIN if parts.len() == 5 => {
+            VERSION_PLAIN if parts.len() == 6 => {
                 let algorithms = parse_algos(parts[2])?;
                 let salt = parse_salt(parts[3])?;
-                let header = Self { algorithms, salt, locked: false };
-                if parts[4] != header.compute_hash() {
+                let ciphertext_hash = parse_hash(parts[4])?;
+                let header = Self { algorithms, salt, locked: false, ciphertext_hash: Some(ciphertext_hash) };
+                if parts[5] != header.compute_hash() {
                     return Err(HeaderError::HashMismatch);
                 }
                 Ok((header, remaining))
@@ -112,19 +131,31 @@ impl Header {
         }
     }
 
+    /// Verify that the ciphertext matches the hash stored in the header
+    pub fn verify_ciphertext(&self, ciphertext: &[u8]) -> Result<(), HeaderError> {
+        if let Some(expected) = &self.ciphertext_hash {
+            let actual: [u8; 32] = Sha256::digest(ciphertext).into();
+            if &actual != expected {
+                return Err(HeaderError::CiphertextHashMismatch);
+            }
+        }
+        Ok(())
+    }
+
     pub fn parse_encrypted<'a>(data: &'a [u8], private_key: &HybridPrivateKey) -> Result<(Self, &'a [u8]), HeaderError> {
         let (parts, remaining) = parse_header_line(data)?;
         if parts[0] != MAGIC { return Err(HeaderError::InvalidMagic); }
-        if parts.len() != 6 || parts[2] != "E" { return Err(HeaderError::InvalidFormat); }
+        if parts.len() != 7 || parts[2] != "E" { return Err(HeaderError::InvalidFormat); }
 
         let version: u8 = parts[1].parse().map_err(|_| HeaderError::InvalidFormat)?;
         if version != VERSION_ENCRYPTED { return Err(HeaderError::UnsupportedVersion(version)); }
 
-        // Verify hash
+        // Verify header hash
         let mut h = Sha256::new();
         h.update(parts[3]);
         h.update(parts[4]);
-        if parts[5] != hex::encode(&h.finalize()[..16]) {
+        h.update(parts[5]);
+        if parts[6] != hex::encode(&h.finalize()[..16]) {
             return Err(HeaderError::HashMismatch);
         }
 
@@ -137,13 +168,14 @@ impl Header {
             &hybrid::decrypt(&encap, &ct, private_key)?
         ).map_err(|e| HeaderError::JsonError(e.to_string()))?;
 
-        Ok((Self { algorithms: parse_algos(&payload.algo_codes)?, salt: payload.salt, locked: payload.seal }, remaining))
+        let ciphertext_hash = parse_hash(parts[5])?;
+        Ok((Self { algorithms: parse_algos(&payload.algo_codes)?, salt: payload.salt, locked: payload.seal, ciphertext_hash: Some(ciphertext_hash) }, remaining))
     }
 
     #[must_use]
     pub fn is_encrypted(data: &[u8]) -> bool {
         parse_header_line(data)
-            .map(|(p, _)| p.len() >= 3 && p[0] == MAGIC && p[1] == "2" && p[2] == "E")
+            .map(|(p, _)| p.len() >= 3 && p[0] == MAGIC && p[1] == "4" && p[2] == "E")
             .unwrap_or(false)
     }
 }
@@ -164,6 +196,11 @@ fn parse_algos(s: &str) -> Result<Vec<Algorithm>, HeaderError> {
 fn parse_salt(s: &str) -> Result<[u8; 32], HeaderError> {
     let bytes = hex::decode(s).map_err(|_| HeaderError::InvalidFormat)?;
     bytes.try_into().map_err(|_| HeaderError::MissingSalt)
+}
+
+fn parse_hash(s: &str) -> Result<[u8; 32], HeaderError> {
+    let bytes = hex::decode(s).map_err(|_| HeaderError::InvalidFormat)?;
+    bytes.try_into().map_err(|_| HeaderError::InvalidFormat)
 }
 
 mod hex {
@@ -206,38 +243,46 @@ mod tests {
     fn test_header_roundtrip() {
         let mut salt = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut salt);
-        let header = Header::new(vec![Algorithm::Aes256, Algorithm::TripleDes, Algorithm::Twofish, Algorithm::Serpent], salt, false);
+        let ciphertext = b"encrypted data here";
+        let header = Header::with_ciphertext(vec![Algorithm::Aes256, Algorithm::TripleDes, Algorithm::Twofish, Algorithm::Serpent], salt, false, ciphertext);
         let mut full = header.serialize().into_bytes();
-        full.extend_from_slice(b"encrypted data here");
+        full.extend_from_slice(ciphertext);
         let (parsed, remaining) = Header::parse(&full).unwrap();
         assert_eq!(parsed.algorithms, header.algorithms);
         assert_eq!(parsed.salt, header.salt);
-        assert_eq!(remaining, b"encrypted data here");
+        assert_eq!(remaining, ciphertext);
+        // Verify ciphertext hash
+        parsed.verify_ciphertext(remaining).unwrap();
     }
 
     #[test]
     fn test_encrypted_header_roundtrip() {
         let mut salt = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut salt);
-        let header = Header::new(vec![Algorithm::Aes256, Algorithm::ChaCha20Poly1305], salt, false);
+        let ciphertext = b"encrypted data here";
+        let header = Header::with_ciphertext(vec![Algorithm::Aes256, Algorithm::ChaCha20Poly1305], salt, false, ciphertext);
         let keypair = HybridKeypair::generate();
         let mut full = header.serialize_encrypted(&keypair.public).unwrap().into_bytes();
-        full.extend_from_slice(b"encrypted data here");
+        full.extend_from_slice(ciphertext);
         assert!(Header::is_encrypted(&full));
         let (parsed, remaining) = Header::parse_encrypted(&full, &keypair.private).unwrap();
         assert_eq!(parsed.algorithms, header.algorithms);
         assert_eq!(parsed.salt, header.salt);
-        assert_eq!(remaining, b"encrypted data here");
+        assert_eq!(remaining, ciphertext);
+        // Verify ciphertext hash
+        parsed.verify_ciphertext(remaining).unwrap();
     }
 
     #[test]
     fn test_encrypted_header_with_seal() {
         let mut salt = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut salt);
-        let header = Header::new(vec![Algorithm::Aes256], salt, true);
+        let ciphertext = b"sealed data";
+        let header = Header::with_ciphertext(vec![Algorithm::Aes256], salt, true, ciphertext);
         let keypair = HybridKeypair::generate();
-        let full = header.serialize_encrypted(&keypair.public).unwrap();
-        let (parsed, _) = Header::parse_encrypted(full.as_bytes(), &keypair.private).unwrap();
+        let mut full = header.serialize_encrypted(&keypair.public).unwrap().into_bytes();
+        full.extend_from_slice(ciphertext);
+        let (parsed, _) = Header::parse_encrypted(&full, &keypair.private).unwrap();
         assert!(parsed.locked);
     }
 
@@ -249,8 +294,21 @@ mod tests {
 
     #[test]
     fn test_hash_mismatch_detection() {
-        let header = Header::new(vec![Algorithm::Aes256], [0u8; 32], false);
+        let ciphertext = b"test data";
+        let header = Header::with_ciphertext(vec![Algorithm::Aes256], [0u8; 32], false, ciphertext);
         let tampered = header.serialize().replace("|A|", "|S|");
         assert!(matches!(Header::parse(tampered.as_bytes()), Err(HeaderError::HashMismatch)));
+    }
+
+    #[test]
+    fn test_ciphertext_hash_mismatch() {
+        let ciphertext = b"original data";
+        let header = Header::with_ciphertext(vec![Algorithm::Aes256], [0u8; 32], false, ciphertext);
+        let mut full = header.serialize().into_bytes();
+        full.extend_from_slice(ciphertext);
+        let (parsed, _) = Header::parse(&full).unwrap();
+        // Should fail with tampered ciphertext
+        let tampered = b"tampered data";
+        assert!(matches!(parsed.verify_ciphertext(tampered), Err(HeaderError::CiphertextHashMismatch)));
     }
 }
