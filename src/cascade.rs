@@ -84,10 +84,12 @@ where F: FnMut(usize, usize) {
     Ok(current.to_vec())
 }
 
+#[must_use = "encrypted data must be used"]
 pub fn encrypt(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>) -> Result<Vec<u8>, CascadeError> {
     encrypt_with_progress(data, password, algorithms, |_, _| {})
 }
 
+#[must_use = "encrypted data must be used"]
 pub fn encrypt_with_progress<F>(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
     if algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
@@ -99,10 +101,12 @@ where F: FnMut(usize, usize) {
     Ok(result)
 }
 
+#[must_use = "encrypted data must be used"]
 pub fn encrypt_protected(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, recipient_public: &HybridPublicKey, locked: bool) -> Result<Vec<u8>, CascadeError> {
     encrypt_protected_with_progress(data, password, algorithms, recipient_public, locked, |_, _| {})
 }
 
+#[must_use = "encrypted data must be used"]
 pub fn encrypt_protected_with_progress<F>(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, recipient_public: &HybridPublicKey, locked: bool, progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
     if algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
@@ -114,10 +118,12 @@ where F: FnMut(usize, usize) {
     Ok(result)
 }
 
+#[must_use = "decrypted data must be used"]
 pub fn decrypt(data: &[u8], password: &[u8]) -> Result<Vec<u8>, CascadeError> {
     decrypt_with_progress(data, password, |_, _| {})
 }
 
+#[must_use = "decrypted data must be used"]
 pub fn decrypt_with_progress<F>(data: &[u8], password: &[u8], progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
     if Header::is_encrypted(data) { return Err(CascadeError::PrivateKeyRequired); }
@@ -125,10 +131,12 @@ where F: FnMut(usize, usize) {
     decrypt_layers(&header, encrypted_data, password, progress)
 }
 
+#[must_use = "decrypted data must be used"]
 pub fn decrypt_protected(data: &[u8], password: &[u8], private_key: &HybridPrivateKey) -> Result<Vec<u8>, CascadeError> {
     decrypt_protected_with_progress(data, password, private_key, |_, _| {})
 }
 
+#[must_use = "decrypted data must be used"]
 pub fn decrypt_protected_with_progress<F>(data: &[u8], password: &[u8], private_key: &HybridPrivateKey, progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
     let (header, encrypted_data) = if Header::is_encrypted(data) {

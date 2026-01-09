@@ -249,76 +249,47 @@ enum Commands {
     },
 }
 
-/// Map a character to its corresponding Algorithm
-fn char_to_algorithm(c: char) -> Option<Algorithm> {
-    match c {
-        'A' => Some(Algorithm::Aes256),
-        'T' => Some(Algorithm::TripleDes),
-        'W' => Some(Algorithm::Twofish),
-        'S' => Some(Algorithm::Serpent),
-        'C' => Some(Algorithm::ChaCha20Poly1305),
-        'X' => Some(Algorithm::XChaCha20Poly1305),
-        'M' => Some(Algorithm::Camellia),
-        'B' => Some(Algorithm::Blowfish),
-        'F' => Some(Algorithm::Cast5),
-        'I' => Some(Algorithm::Idea),
-        'R' => Some(Algorithm::Aria),
-        '4' => Some(Algorithm::Sm4),
-        'K' => Some(Algorithm::Kuznyechik),
-        'E' => Some(Algorithm::Seed),
-        '3' => Some(Algorithm::Threefish256),
-        '6' => Some(Algorithm::Rc6),
-        'G' => Some(Algorithm::Magma),
-        'P' => Some(Algorithm::Speck128_256),
-        'J' => Some(Algorithm::Gift128),
-        'N' => Some(Algorithm::Ascon128),
-        _ => None,
-    }
-}
+/// Long flag name to Algorithm mapping
+const LONG_FLAGS: &[(&str, Algorithm)] = &[
+    ("--aes", Algorithm::Aes256),
+    ("--3des", Algorithm::TripleDes),
+    ("--twofish", Algorithm::Twofish),
+    ("--serpent", Algorithm::Serpent),
+    ("--chacha", Algorithm::ChaCha20Poly1305),
+    ("--xchacha", Algorithm::XChaCha20Poly1305),
+    ("--camellia", Algorithm::Camellia),
+    ("--blowfish", Algorithm::Blowfish),
+    ("--cast5", Algorithm::Cast5),
+    ("--idea", Algorithm::Idea),
+    ("--aria", Algorithm::Aria),
+    ("--sm4", Algorithm::Sm4),
+    ("--kuznyechik", Algorithm::Kuznyechik),
+    ("--seed", Algorithm::Seed),
+    ("--threefish", Algorithm::Threefish256),
+    ("--rc6", Algorithm::Rc6),
+    ("--magma", Algorithm::Magma),
+    ("--speck", Algorithm::Speck128_256),
+    ("--gift", Algorithm::Gift128),
+    ("--ascon", Algorithm::Ascon128),
+];
 
 /// Parse algorithm flags in the order they appear in argv
 /// Supports both individual flags (-A -S -C) and combined flags (-ASC)
 fn parse_algorithms_in_order() -> Vec<Algorithm> {
-    let args: Vec<String> = std::env::args().collect();
     let algo_set: HashSet<char> = ALGO_CHARS.into_iter().collect();
     let mut algorithms = Vec::new();
 
-    for arg in &args {
-        // Handle long flags
-        match arg.as_str() {
-            "--aes" => algorithms.push(Algorithm::Aes256),
-            "--3des" => algorithms.push(Algorithm::TripleDes),
-            "--twofish" => algorithms.push(Algorithm::Twofish),
-            "--serpent" => algorithms.push(Algorithm::Serpent),
-            "--chacha" => algorithms.push(Algorithm::ChaCha20Poly1305),
-            "--xchacha" => algorithms.push(Algorithm::XChaCha20Poly1305),
-            "--camellia" => algorithms.push(Algorithm::Camellia),
-            "--blowfish" => algorithms.push(Algorithm::Blowfish),
-            "--cast5" => algorithms.push(Algorithm::Cast5),
-            "--idea" => algorithms.push(Algorithm::Idea),
-            "--aria" => algorithms.push(Algorithm::Aria),
-            "--sm4" => algorithms.push(Algorithm::Sm4),
-            "--kuznyechik" => algorithms.push(Algorithm::Kuznyechik),
-            "--seed" => algorithms.push(Algorithm::Seed),
-            "--threefish" => algorithms.push(Algorithm::Threefish256),
-            "--rc6" => algorithms.push(Algorithm::Rc6),
-            "--magma" => algorithms.push(Algorithm::Magma),
-            "--speck" => algorithms.push(Algorithm::Speck128_256),
-            "--gift" => algorithms.push(Algorithm::Gift128),
-            "--ascon" => algorithms.push(Algorithm::Ascon128),
-            _ => {
-                // Handle short flags: both single (-A) and combined (-ASC)
-                if arg.starts_with('-') && !arg.starts_with("--") {
-                    let chars: Vec<char> = arg[1..].chars().collect();
-                    // Only process if all chars are algorithm flags
-                    if chars.iter().all(|c| algo_set.contains(c)) {
-                        for c in chars {
-                            if let Some(algo) = char_to_algorithm(c) {
-                                algorithms.push(algo);
-                            }
-                        }
-                    }
-                }
+    for arg in std::env::args() {
+        // Check long flags first
+        if let Some(&(_, algo)) = LONG_FLAGS.iter().find(|(flag, _)| *flag == arg) {
+            algorithms.push(algo);
+            continue;
+        }
+        // Handle short flags: both single (-A) and combined (-ASC)
+        if arg.starts_with('-') && !arg.starts_with("--") {
+            let chars: Vec<char> = arg[1..].chars().collect();
+            if chars.iter().all(|c| algo_set.contains(c)) {
+                algorithms.extend(chars.iter().filter_map(|&c| Algorithm::from_code(c)));
             }
         }
     }
@@ -334,13 +305,11 @@ fn generate_random_algorithms(count: usize) -> Vec<Algorithm> {
 
 /// Check if any individual algorithm flags were specified
 fn has_algorithm_flags(cli: &Cli) -> bool {
-    [
-        cli.aes, cli.triple_des, cli.twofish, cli.serpent,
-        cli.chacha, cli.xchacha, cli.camellia, cli.blowfish,
-        cli.cast5, cli.idea, cli.aria, cli.sm4, cli.kuznyechik,
-        cli.seed, cli.threefish, cli.rc6, cli.magma, cli.speck,
-        cli.gift, cli.ascon,
-    ].into_iter().any(|f| f)
+    cli.aes || cli.triple_des || cli.twofish || cli.serpent
+        || cli.chacha || cli.xchacha || cli.camellia || cli.blowfish
+        || cli.cast5 || cli.idea || cli.aria || cli.sm4 || cli.kuznyechik
+        || cli.seed || cli.threefish || cli.rc6 || cli.magma || cli.speck
+        || cli.gift || cli.ascon
 }
 
 fn get_password(cli: &Cli) -> Result<Zeroizing<Vec<u8>>> {

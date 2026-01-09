@@ -364,11 +364,13 @@ fn ascon_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> 
 }
 
 
+#[must_use = "encrypted data must be used"]
 pub fn encrypt(algo: Algorithm, key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
     let (enc, _) = get_cipher_fns(algo);
     enc(key, plaintext)
 }
 
+#[must_use = "decrypted data must be used"]
 pub fn decrypt(algo: Algorithm, key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
     let (_, dec) = get_cipher_fns(algo);
     dec(key, ciphertext)

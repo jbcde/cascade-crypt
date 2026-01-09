@@ -6,6 +6,10 @@ use std::fs;
 use std::io::Write;
 use std::process::{Command, Stdio};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Unique counter for temp file names to prevent race conditions
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Get path to the cascrypt binary
 fn binary_path() -> PathBuf {
@@ -16,10 +20,11 @@ fn binary_path() -> PathBuf {
     path
 }
 
-/// Create a temporary file with given content
+/// Create a temporary file with given content (thread-safe unique naming)
 fn create_temp_file(name: &str, content: &[u8]) -> PathBuf {
+    let id = TEMP_FILE_COUNTER.fetch_add(1, Ordering::SeqCst);
     let mut path = std::env::temp_dir();
-    path.push(format!("cascade_test_{}", name));
+    path.push(format!("cascrypt_test_{}_{}", id, name));
     fs::write(&path, content).expect("Failed to create temp file");
     path
 }
