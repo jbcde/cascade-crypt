@@ -1,19 +1,19 @@
-# cascade-crypt Usage Guide
+# cascrypt Usage Guide
 
 ## Quick Start
 
 ```bash
 # Encrypt a file with AES + Serpent + ChaCha20
-cascade-crypt -A -S -C -i input.bin -o output.enc -k "password"
+cascrypt -ASC -i input.bin -o output.enc -k "password"
 
 # Decrypt
-cascade-crypt -d -i output.enc -o decrypted.bin -k "password"
+cascrypt -d -i output.enc -o decrypted.bin -k "password"
 ```
 
 ## Command Line Reference
 
 ```
-cascade-crypt [OPTIONS] [COMMAND]
+cascrypt [OPTIONS] [COMMAND]
 
 COMMANDS:
     keygen          Generate hybrid X25519+Kyber keypair
@@ -67,14 +67,17 @@ Specify algorithms in the order you want them applied:
 
 ```bash
 # Single algorithm
-cascade-crypt -A -i file.bin -o file.enc
+cascrypt -A -i file.bin -o file.enc
 
 # Multiple algorithms (applied left to right)
-cascade-crypt -A -S -C -W -i file.bin -o file.enc
+cascrypt -ASCW -i file.bin -o file.enc
 # Result: AES -> Serpent -> ChaCha20 -> Twofish
+
+# Separate flags also work
+cascrypt -A -S -C -W -i file.bin -o file.enc
 ```
 
-Algorithms are applied in command-line order. Each flag can only be used once per command. To apply the same algorithm multiple times, use random mode (`-n`).
+Algorithm flags can be combined under a single `-` (e.g., `-ASC`) or specified separately (`-A -S -C`). Both styles can be mixed. Algorithms are applied in command-line order. Each flag can only be used once per command. To apply the same algorithm multiple times, use random mode (`-n`).
 
 ### Random Algorithm Selection
 
@@ -82,13 +85,13 @@ Use `-n` to randomly select N algorithms from all 20 available:
 
 ```bash
 # 10 random layers
-cascade-crypt -n 10 -i file.bin -o file.enc
+cascrypt -n 10 -i file.bin -o file.enc
 
 # 100 random layers (duplicates expected)
-cascade-crypt -n 100 -i file.bin -o file.enc
+cascrypt -n 100 -i file.bin -o file.enc
 
 # 1000 layers for extreme paranoia
-cascade-crypt -n 1000 -i file.bin -o file.enc
+cascrypt -n 1000 -i file.bin -o file.enc
 ```
 
 The `-n` flag:
@@ -99,7 +102,7 @@ The `-n` flag:
 
 ```bash
 # ERROR: Cannot mix -n with algorithm flags
-cascade-crypt -n 10 -A -i file.bin -o file.enc
+cascrypt -n 10 -A -i file.bin -o file.enc
 ```
 
 ## Decryption
@@ -108,13 +111,13 @@ Decryption is automatic - the algorithm order is stored in the file header:
 
 ```bash
 # Basic decryption
-cascade-crypt -d -i encrypted.enc -o decrypted.bin
+cascrypt -d -i encrypted.enc -o decrypted.bin
 
 # With password on command line
-cascade-crypt -d -i encrypted.enc -o decrypted.bin -k "password"
+cascrypt -d -i encrypted.enc -o decrypted.bin -k "password"
 
 # From keyfile
-cascade-crypt -d -i encrypted.enc -o decrypted.bin --keyfile secret.key
+cascrypt -d -i encrypted.enc -o decrypted.bin --keyfile secret.key
 ```
 
 ## Silent Mode
@@ -123,12 +126,12 @@ Use `-s` to suppress all status output:
 
 ```bash
 # Normal output
-cascade-crypt -n 5 -i file.bin -o file.enc -k "pass"
+cascrypt -n 5 -i file.bin -o file.enc -k "pass"
 # Output: Encrypting with: AES-256-GCM -> Serpent-256-CBC -> ...
 #         Encryption complete.
 
 # Silent output
-cascade-crypt -s -n 5 -i file.bin -o file.enc -k "pass"
+cascrypt -s -n 5 -i file.bin -o file.enc -k "pass"
 # Output: (nothing)
 ```
 
@@ -145,7 +148,7 @@ Silent mode prevents shoulder-surfing and log capture of algorithm order:
 
 ```bash
 # Maximum OPSEC: silent + random + protected header
-cascade-crypt -s -n 50 --pubkey recipient.pub -i secret.bin -o secret.enc
+cascrypt -s -n 50 --pubkey recipient.pub -i secret.bin -o secret.enc
 ```
 
 ## Progress Bar
@@ -154,13 +157,13 @@ Use `--progress` to display a progress bar during long encryption/decryption ope
 
 ```bash
 # Encrypt with progress bar
-cascade-crypt --progress -n 100 -i file.bin -o file.enc -k "pass"
+cascrypt --progress -n 100 -i file.bin -o file.enc -k "pass"
 # Output: Encrypting with 100 algorithms
 #         Encrypting [########################################] 100/100 (0s)
 #         Encryption complete.
 
 # Decrypt with progress bar
-cascade-crypt --progress -d -i file.enc -o file.dec -k "pass"
+cascrypt --progress -d -i file.enc -o file.dec -k "pass"
 ```
 
 The progress bar:
@@ -179,13 +182,13 @@ By default, the file header reveals which algorithms were used. Protected header
 
 ```bash
 # Generate keypair
-cascade-crypt keygen -o my.keypair
+cascrypt keygen -o my.keypair
 
 # Generate and export public key
-cascade-crypt keygen -o my.keypair --export-pubkey my.pub
+cascrypt keygen -o my.keypair --export-pubkey my.pub
 
 # Export public key from existing keypair
-cascade-crypt export-pubkey -i my.keypair -o my.pub
+cascrypt export-pubkey -i my.keypair -o my.pub
 ```
 
 The keypair uses:
@@ -195,23 +198,23 @@ The keypair uses:
 ### Encrypt with Protected Header
 
 ```bash
-cascade-crypt -A -S -C -i secret.bin -o secret.enc --pubkey recipient.pub
+cascrypt -A -S -C -i secret.bin -o secret.enc --pubkey recipient.pub
 ```
 
 ### Decrypt Protected Header
 
 ```bash
-cascade-crypt -d -i secret.enc -o secret.bin --privkey my.keypair
+cascrypt -d -i secret.enc -o secret.bin --privkey my.keypair
 ```
 
 ### Combined with Random Mode
 
 ```bash
 # Encrypt: random algorithms + protected header
-cascade-crypt -n 30 --pubkey recipient.pub -i secret.bin -o secret.enc
+cascrypt -n 30 --pubkey recipient.pub -i secret.bin -o secret.enc
 
 # Decrypt
-cascade-crypt -d --privkey my.keypair -i secret.enc -o secret.bin
+cascrypt -d --privkey my.keypair -i secret.enc -o secret.bin
 ```
 
 ### Puzzle Lock Mode
@@ -220,10 +223,10 @@ Use `--lock` with `--pubkey` to apply an additional transformation to the encryp
 
 ```bash
 # Encrypt with puzzle lock
-cascade-crypt -A -S -C --pubkey recipient.pub --lock -i secret.bin -o secret.enc
+cascrypt -A -S -C --pubkey recipient.pub --lock -i secret.bin -o secret.enc
 
 # Decrypt (requires private key)
-cascade-crypt -d --privkey my.keypair -i secret.enc -o secret.bin -k "password"
+cascrypt -d --privkey my.keypair -i secret.enc -o secret.bin -k "password"
 ```
 
 The puzzle lock:
@@ -239,7 +242,7 @@ The puzzle lock:
 If no key is provided, you'll be prompted:
 
 ```bash
-cascade-crypt -A -i file.bin -o file.enc
+cascrypt -A -i file.bin -o file.enc
 # Enter encryption password:
 # Confirm password:
 ```
@@ -247,7 +250,7 @@ cascade-crypt -A -i file.bin -o file.enc
 ### Command Line
 
 ```bash
-cascade-crypt -A -i file.bin -o file.enc -k "my password"
+cascrypt -A -i file.bin -o file.enc -k "my password"
 ```
 
 Note: Password visible in shell history and process list.
@@ -256,11 +259,11 @@ Note: Password visible in shell history and process list.
 
 ```bash
 # Use entire file contents as key
-cascade-crypt -A -i file.bin -o file.enc --keyfile secret.key
+cascrypt -A -i file.bin -o file.enc --keyfile secret.key
 
 # Binary keyfile works too
 dd if=/dev/urandom of=secret.key bs=64 count=1
-cascade-crypt -A -i file.bin -o file.enc --keyfile secret.key
+cascrypt -A -i file.bin -o file.enc --keyfile secret.key
 ```
 
 ## Stdin/Stdout
@@ -269,13 +272,13 @@ Use `-` for stdin or stdout:
 
 ```bash
 # Encrypt from stdin
-cat secret.txt | cascade-crypt -A -S -i - -o encrypted.bin -k "pass"
+cat secret.txt | cascrypt -A -S -i - -o encrypted.bin -k "pass"
 
 # Decrypt to stdout
-cascade-crypt -d -i encrypted.bin -o - -k "pass" > decrypted.txt
+cascrypt -d -i encrypted.bin -o - -k "pass" > decrypted.txt
 
 # Both (pipe through)
-cat secret.txt | cascade-crypt -A -i - -o - -k "pass" | base64
+cat secret.txt | cascrypt -A -i - -o - -k "pass" | base64
 ```
 
 ## Algorithm Reference
@@ -312,54 +315,54 @@ cat secret.txt | cascade-crypt -A -i - -o - -k "pass" | base64
 
 ```bash
 # Simple encryption
-cascade-crypt -A -i secret.txt -o secret.enc
+cascrypt -A -i secret.txt -o secret.enc
 
 # Decrypt
-cascade-crypt -d -i secret.enc -o secret.txt
+cascrypt -d -i secret.enc -o secret.txt
 ```
 
 ### Multi-Layer Encryption
 
 ```bash
 # 4 algorithms
-cascade-crypt -A -T -W -S -i data.bin -o data.enc
+cascrypt -ATWS -i data.bin -o data.enc
 
 # All 20 algorithms
-cascade-crypt -A -T -W -S -C -X -M -B -F -I -R -4 -K -E -3 -6 -G -P -J -N -i data.bin -o fortress.enc
+cascrypt -ATWSCXMBFIR4KE36GPJN -i data.bin -o fortress.enc
 ```
 
 ### Random Encryption
 
 ```bash
 # Quick random (5 layers)
-cascade-crypt -n 5 -i file.bin -o file.enc
+cascrypt -n 5 -i file.bin -o file.enc
 
 # Heavy random (50 layers)
-cascade-crypt -n 50 -i file.bin -o file.enc
+cascrypt -n 50 -i file.bin -o file.enc
 
 # Extreme (500 layers) with progress bar
-cascade-crypt --progress -n 500 -i file.bin -o file.enc
+cascrypt --progress -n 500 -i file.bin -o file.enc
 ```
 
 ### Secure Workflow
 
 ```bash
 # Generate keys for Alice and Bob
-cascade-crypt keygen -o alice.keypair --export-pubkey alice.pub
-cascade-crypt keygen -o bob.keypair --export-pubkey bob.pub
+cascrypt keygen -o alice.keypair --export-pubkey alice.pub
+cascrypt keygen -o bob.keypair --export-pubkey bob.pub
 
 # Alice encrypts for Bob (silent, random, protected)
-cascade-crypt -s -n 30 --pubkey bob.pub -i message.txt -o message.enc -k "shared-secret"
+cascrypt -s -n 30 --pubkey bob.pub -i message.txt -o message.enc -k "shared-secret"
 
 # Bob decrypts
-cascade-crypt -s -d --privkey bob.keypair -i message.enc -o message.txt -k "shared-secret"
+cascrypt -s -d --privkey bob.keypair -i message.enc -o message.txt -k "shared-secret"
 ```
 
 ### Scripting
 
 ```bash
 # Silent mode for scripts (check exit code)
-if cascade-crypt -s -A -i file.bin -o file.enc -k "$PASSWORD"; then
+if cascrypt -s -A -i file.bin -o file.enc -k "$PASSWORD"; then
     echo "Encryption succeeded"
 else
     echo "Encryption failed"
@@ -367,7 +370,7 @@ fi
 
 # Process multiple files
 for f in *.txt; do
-    cascade-crypt -s -n 10 -i "$f" -o "${f}.enc" -k "$PASSWORD"
+    cascrypt -s -n 10 -i "$f" -o "${f}.enc" -k "$PASSWORD"
 done
 ```
 

@@ -1,4 +1,4 @@
-# cascade-crypt
+# cascrypt
 
 Cascading binary encryption tool with user-controlled algorithm ordering. Encrypt files through multiple layers of encryption, applied in the order you specify.
 
@@ -6,6 +6,7 @@ Cascading binary encryption tool with user-controlled algorithm ordering. Encryp
 
 - **20 symmetric ciphers** - mix and match in any order
 - **Cascading encryption** - algorithms applied sequentially in command-line order
+- **Combined flags** - use `-ASC` instead of `-A -S -C` for convenience
 - **Random mode** - randomly select N algorithms (with duplicates) for unpredictable layering
 - **Silent mode** - suppress all output for operational security
 - **Progress bar** - optional visual feedback for long operations (`--progress`)
@@ -18,32 +19,32 @@ Cascading binary encryption tool with user-controlled algorithm ordering. Encryp
 
 ```bash
 cargo build --release
-# Binary at ./target/release/cascade-crypt
+# Binary at ./target/release/cascrypt
 ```
 
 ## Usage
 
 ### Encrypt (manual algorithm selection)
 ```bash
-cascade-crypt -A -S -C -i secret.bin -o secret.enc -k "password"
+cascrypt -ASC -i secret.bin -o secret.enc -k "password"
 ```
-Encrypts with AES-256 → Serpent → ChaCha20 (in that order).
+Encrypts with AES-256 → Serpent → ChaCha20 (in that order). Flags can be combined (`-ASC`) or separate (`-A -S -C`).
 
 ### Encrypt (random algorithm selection)
 ```bash
-cascade-crypt -n 20 -i secret.bin -o secret.enc -k "password"
+cascrypt -n 20 -i secret.bin -o secret.enc -k "password"
 ```
 Encrypts with 20 randomly selected algorithms (duplicates allowed).
 
 ### Decrypt
 ```bash
-cascade-crypt -d -i secret.enc -o secret.bin -k "password"
+cascrypt -d -i secret.enc -o secret.bin -k "password"
 ```
 Algorithm order is read from the file header automatically.
 
 ### Silent mode
 ```bash
-cascade-crypt -s -n 50 -i secret.bin -o secret.enc -k "password"
+cascrypt -s -n 50 -i secret.bin -o secret.enc -k "password"
 ```
 Suppresses all status output (algorithm chain, completion messages).
 
@@ -124,10 +125,10 @@ Generate a hybrid keypair (X25519 + Kyber1024):
 
 ```bash
 # Generate keypair and export public key
-cascade-crypt keygen -o my.keypair --export-pubkey my.pubkey
+cascrypt keygen -o my.keypair --export-pubkey my.pubkey
 
 # Or export public key later
-cascade-crypt export-pubkey -i my.keypair -o my.pubkey
+cascrypt export-pubkey -i my.keypair -o my.pubkey
 ```
 
 The keypair combines:
@@ -139,7 +140,7 @@ The keypair combines:
 Encrypt with a protected header using the recipient's public key:
 
 ```bash
-cascade-crypt -A -S -C -i secret.bin -o secret.enc -k "password" --pubkey recipient.pubkey
+cascrypt -ASC -i secret.bin -o secret.enc -k "password" --pubkey recipient.pubkey
 ```
 
 The algorithm order and salt are now encrypted. An attacker sees only:
@@ -152,7 +153,7 @@ The algorithm order and salt are now encrypted. An attacker sees only:
 Decrypt using your private key (full keypair file):
 
 ```bash
-cascade-crypt -d -i secret.enc -o secret.bin -k "password" --privkey my.keypair
+cascrypt -d -i secret.enc -o secret.bin -k "password" --privkey my.keypair
 ```
 
 Without the private key, decryption fails:
@@ -189,27 +190,27 @@ Error: Encrypted header requires private key
 
 ```bash
 # Maximum paranoia - all 20 ciphers
-cascade-crypt -A -T -W -S -C -X -M -B -F -I -R -4 -K -E -3 -6 -G -P -J -N -i file.bin -o fortress.enc
+cascrypt -ATWSCXMBFIR4KE36GPJN -i file.bin -o fortress.enc
 
 # Quick and modern
-cascade-crypt -C -A -i file.bin -o file.enc
+cascrypt -CA -i file.bin -o file.enc
 
 # Random 100-layer encryption with progress bar
-cascade-crypt --progress -n 100 -i file.bin -o file.enc
+cascrypt --progress -n 100 -i file.bin -o file.enc
 
 # Silent random encryption with protected header (maximum OPSEC)
-cascade-crypt -s -n 50 --pubkey recipient.pubkey -i secret.bin -o secret.enc
+cascrypt -s -n 50 --pubkey recipient.pubkey -i secret.bin -o secret.enc
 
 # Pipe from stdin
-cat secret.txt | cascade-crypt -A -S -i - -o - -k "pass" > encrypted.bin
+cat secret.txt | cascrypt -AS -i - -o - -k "pass" > encrypted.bin
 
 # Protected header workflow
-cascade-crypt keygen -o alice.keypair --export-pubkey alice.pubkey
-cascade-crypt -A -C -S -i secret.bin -o secret.enc --pubkey alice.pubkey
-cascade-crypt -d -i secret.enc -o secret.bin --privkey alice.keypair
+cascrypt keygen -o alice.keypair --export-pubkey alice.pubkey
+cascrypt -ACS -i secret.bin -o secret.enc --pubkey alice.pubkey
+cascrypt -d -i secret.enc -o secret.bin --privkey alice.keypair
 
 # Silent decryption
-cascade-crypt -s -d -i secret.enc -o secret.bin -k "password"
+cascrypt -s -d -i secret.enc -o secret.bin -k "password"
 ```
 
 ## Security Notes
