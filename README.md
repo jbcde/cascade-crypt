@@ -62,30 +62,6 @@ Suppresses all status output (algorithm chain, completion messages).
     --privkey FILE  Private key for protected headers (decrypt)
 ```
 
-### Progress Bar & Status Icons
-
-When using `--progress` or viewing status output, the terminal displays status icons. These require a [Nerd Font](https://www.nerdfonts.com/) to render correctly.
-
-| Emoji | Nerd Font | Meaning |
-|-------|-----------|---------|
-| 🔒 | `nf-md-lock` | Encrypting / Generating keypair |
-| 🔓 | `nf-md-lock_open` | Decrypting |
-| 🛡️ | `nf-md-shield_lock` | Protected header active |
-| 🔐 | `nf-md-lock_alert` | Keep keypair private / Puzzle lock mode |
-| 🧩 | `nf-md-puzzle` | Puzzle lock feature |
-| ⏱️ | `nf-md-clock` | ETA (time remaining) |
-| 🔗 | `nf-md-key_chain` | Keypair contents |
-| 🔷 | `nf-md-key_variant` | X25519 classical key |
-| 🔶 | `nf-md-key_wireless` | Kyber1024 post-quantum key |
-| 📤 | `nf-md-share_variant` | Share public key |
-
-Progress bar example:
-```
-⠋ 🔒 Encrypting │━━━━━━━━━━╾─────────────│ 7/20 ⏱️ 2s
-```
-
-**Note:** Without a Nerd Font installed, you may see placeholder boxes instead of icons—functionality is unaffected.
-
 ## Algorithms
 
 | Flag | Code | Algorithm | Block/Stream |
