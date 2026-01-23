@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{ArgAction, Parser, Subcommand};
 use indicatif::{ProgressBar, ProgressStyle};
 use rand::seq::SliceRandom;
 use std::collections::HashSet;
@@ -25,13 +25,28 @@ const ALGO_CHARS: [char; 20] = [
     'R', '4', 'K', 'E', '3', '6', 'G', 'P', 'J', 'N',
 ];
 
+/// Algorithm long flag names (lowercase, without --) for case-insensitive matching
+const ALGO_LONG_NAMES: &[&str] = &[
+    "aes", "3des", "twofish", "serpent", "chacha", "xchacha", "camellia",
+    "blowfish", "cast5", "idea", "aria", "sm4", "kuznyechik", "seed",
+    "threefish", "rc6", "magma", "speck", "gift", "ascon",
+];
+
 /// Expand combined short flags like -ABC into -A -B -C
-/// This allows users to write `-ASC` instead of `-A -S -C`
+/// Also normalizes algorithm long flags to lowercase for case-insensitive matching
 fn expand_combined_flags(args: Vec<String>) -> Vec<String> {
     let algo_set: HashSet<char> = ALGO_CHARS.into_iter().collect();
     let mut result = Vec::with_capacity(args.len());
 
     for arg in args {
+        // Normalize algorithm long flags to lowercase (e.g., --AES -> --aes)
+        if arg.starts_with("--") {
+            let lower = arg.to_lowercase();
+            if ALGO_LONG_NAMES.contains(&&lower[2..]) {
+                result.push(lower);
+                continue;
+            }
+        }
         // Check if this is a short flag group (starts with - but not --)
         // and has more than one character after the dash
         if arg.starts_with('-') && !arg.starts_with("--") && arg.len() > 2 {
@@ -113,89 +128,93 @@ struct Cli {
     #[arg(long = "lock")]
     lock: bool,
 
+    /// List all available algorithms and exit
+    #[arg(long = "list")]
+    list: bool,
+
     // ===== Original algorithms =====
     /// Use AES-256-GCM encryption [code: A]
-    #[arg(short = 'A', long = "aes")]
-    aes: bool,
+    #[arg(short = 'A', long = "aes", action = ArgAction::Count)]
+    aes: u8,
 
     /// Use Triple-DES (3DES) encryption [code: T]
-    #[arg(short = 'T', long = "3des")]
-    triple_des: bool,
+    #[arg(short = 'T', long = "3des", action = ArgAction::Count)]
+    triple_des: u8,
 
     /// Use Twofish-256 encryption [code: W]
-    #[arg(short = 'W', long = "twofish")]
-    twofish: bool,
+    #[arg(short = 'W', long = "twofish", action = ArgAction::Count)]
+    twofish: u8,
 
     /// Use Serpent-256 encryption [code: S]
-    #[arg(short = 'S', long = "serpent")]
-    serpent: bool,
+    #[arg(short = 'S', long = "serpent", action = ArgAction::Count)]
+    serpent: u8,
 
     // ===== Stream ciphers =====
     /// Use ChaCha20-Poly1305 encryption [code: C]
-    #[arg(short = 'C', long = "chacha")]
-    chacha: bool,
+    #[arg(short = 'C', long = "chacha", action = ArgAction::Count)]
+    chacha: u8,
 
     /// Use XChaCha20-Poly1305 encryption (extended nonce) [code: X]
-    #[arg(short = 'X', long = "xchacha")]
-    xchacha: bool,
+    #[arg(short = 'X', long = "xchacha", action = ArgAction::Count)]
+    xchacha: u8,
 
     // ===== Additional block ciphers =====
     /// Use Camellia-256 encryption [code: M]
-    #[arg(short = 'M', long = "camellia")]
-    camellia: bool,
+    #[arg(short = 'M', long = "camellia", action = ArgAction::Count)]
+    camellia: u8,
 
     /// Use Blowfish-256 encryption [code: B]
-    #[arg(short = 'B', long = "blowfish")]
-    blowfish: bool,
+    #[arg(short = 'B', long = "blowfish", action = ArgAction::Count)]
+    blowfish: u8,
 
     /// Use CAST5 encryption [code: F]
-    #[arg(short = 'F', long = "cast5")]
-    cast5: bool,
+    #[arg(short = 'F', long = "cast5", action = ArgAction::Count)]
+    cast5: u8,
 
     /// Use IDEA encryption [code: I]
-    #[arg(short = 'I', long = "idea")]
-    idea: bool,
+    #[arg(short = 'I', long = "idea", action = ArgAction::Count)]
+    idea: u8,
 
     /// Use ARIA-256 encryption [code: R]
-    #[arg(short = 'R', long = "aria")]
-    aria: bool,
+    #[arg(short = 'R', long = "aria", action = ArgAction::Count)]
+    aria: u8,
 
     /// Use SM4 encryption (Chinese standard) [code: 4]
-    #[arg(short = '4', long = "sm4")]
-    sm4: bool,
+    #[arg(short = '4', long = "sm4", action = ArgAction::Count)]
+    sm4: u8,
 
     /// Use Kuznyechik encryption (Russian GOST) [code: K]
-    #[arg(short = 'K', long = "kuznyechik")]
-    kuznyechik: bool,
+    #[arg(short = 'K', long = "kuznyechik", action = ArgAction::Count)]
+    kuznyechik: u8,
 
     /// Use SEED encryption (Korean standard) [code: E]
-    #[arg(short = 'E', long = "seed")]
-    seed: bool,
+    #[arg(short = 'E', long = "seed", action = ArgAction::Count)]
+    seed: u8,
 
     /// Use Threefish-256 encryption (Schneier's cipher) [code: 3]
-    #[arg(short = '3', long = "threefish")]
-    threefish: bool,
+    #[arg(short = '3', long = "threefish", action = ArgAction::Count)]
+    threefish: u8,
 
     // ===== cipher 0.5 ciphers =====
     /// Use RC6 encryption (AES finalist) [code: 6]
-    #[arg(short = '6', long = "rc6")]
-    rc6: bool,
+    #[arg(short = '6', long = "rc6", action = ArgAction::Count)]
+    rc6: u8,
 
     /// Use Magma encryption (Russian GOST 28147-89) [code: G]
-    #[arg(short = 'G', long = "magma")]
-    magma: bool,
+    #[arg(short = 'G', long = "magma", action = ArgAction::Count)]
+    magma: u8,
 
     /// Use Speck128/256 encryption (NSA lightweight) [code: P]
-    #[arg(short = 'P', long = "speck")]
-    speck: bool,
+    #[arg(short = 'P', long = "speck", action = ArgAction::Count)]
+    speck: u8,
 
     /// Use GIFT-128 encryption (lightweight cipher) [code: J]
-    #[arg(short = 'J', long = "gift")]
-    gift: bool,
+    #[arg(short = 'J', long = "gift", action = ArgAction::Count)]
+    gift: u8,
 
     /// Use Ascon-128 encryption (NIST 2023 winner) [code: N]
-    #[arg(short = 'N', long = "ascon")]
-    ascon: bool,
+    #[arg(short = 'N', long = "ascon", action = ArgAction::Count)]
+    ascon: u8,
 
     // ===== I/O options =====
     /// Input file (use '-' for stdin)
@@ -275,15 +294,19 @@ const LONG_FLAGS: &[(&str, Algorithm)] = &[
 
 /// Parse algorithm flags in the order they appear in argv
 /// Supports both individual flags (-A -S -C) and combined flags (-ASC)
+/// Long flags are matched case-insensitively
 fn parse_algorithms_in_order() -> Vec<Algorithm> {
     let algo_set: HashSet<char> = ALGO_CHARS.into_iter().collect();
     let mut algorithms = Vec::new();
 
     for arg in std::env::args() {
-        // Check long flags first
-        if let Some(&(_, algo)) = LONG_FLAGS.iter().find(|(flag, _)| *flag == arg) {
-            algorithms.push(algo);
-            continue;
+        // Check long flags first (case-insensitive)
+        if arg.starts_with("--") {
+            let lower = arg.to_lowercase();
+            if let Some(&(_, algo)) = LONG_FLAGS.iter().find(|(flag, _)| *flag == lower) {
+                algorithms.push(algo);
+                continue;
+            }
         }
         // Handle short flags: both single (-A) and combined (-ASC)
         if arg.starts_with('-') && !arg.starts_with("--") {
@@ -305,11 +328,11 @@ fn generate_random_algorithms(count: usize) -> Vec<Algorithm> {
 
 /// Check if any individual algorithm flags were specified
 fn has_algorithm_flags(cli: &Cli) -> bool {
-    cli.aes || cli.triple_des || cli.twofish || cli.serpent
-        || cli.chacha || cli.xchacha || cli.camellia || cli.blowfish
-        || cli.cast5 || cli.idea || cli.aria || cli.sm4 || cli.kuznyechik
-        || cli.seed || cli.threefish || cli.rc6 || cli.magma || cli.speck
-        || cli.gift || cli.ascon
+    cli.aes > 0 || cli.triple_des > 0 || cli.twofish > 0 || cli.serpent > 0
+        || cli.chacha > 0 || cli.xchacha > 0 || cli.camellia > 0 || cli.blowfish > 0
+        || cli.cast5 > 0 || cli.idea > 0 || cli.aria > 0 || cli.sm4 > 0 || cli.kuznyechik > 0
+        || cli.seed > 0 || cli.threefish > 0 || cli.rc6 > 0 || cli.magma > 0 || cli.speck > 0
+        || cli.gift > 0 || cli.ascon > 0
 }
 
 fn get_password(cli: &Cli) -> Result<Zeroizing<Vec<u8>>> {
@@ -449,7 +472,34 @@ fn cmd_export_pubkey(input: &Path, output: &Path) -> Result<()> {
     Ok(())
 }
 
+fn cmd_list_algorithms() {
+    println!("Available encryption algorithms:\n");
+    println!("  Flag  Long           Algorithm             Type    Key Size");
+    println!("  ────  ────────────   ─────────────────     ─────   ────────");
+    for algo in ALL_ALGORITHMS {
+        let long = LONG_FLAGS.iter()
+            .find(|(_, a)| *a == algo)
+            .map(|(l, _)| &l[2..])  // strip "--" prefix
+            .unwrap_or("");
+        let aead = matches!(algo,
+            Algorithm::Aes256 | Algorithm::ChaCha20Poly1305 |
+            Algorithm::XChaCha20Poly1305 | Algorithm::Ascon128);
+        println!("  -{:<4} --{:<12} {:<21} {:<7} {}-bit",
+            algo.code(), long, algo.name(),
+            if aead { "AEAD" } else { "Block" },
+            algo.key_size() * 8);
+    }
+    println!("\nUse flags in any order. Combine short flags: -ASC or -A -S -C");
+    println!("Repeat flags for multiple layers: -AAA or -A -A -A");
+}
+
 fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
+    // Handle --list before requiring input/output
+    if cli.list {
+        cmd_list_algorithms();
+        return Ok(());
+    }
+
     // Validate required arguments for encrypt/decrypt mode
     let input = cli
         .input
