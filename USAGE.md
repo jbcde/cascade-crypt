@@ -77,7 +77,7 @@ cascrypt -ASCW -i file.bin -o file.enc
 cascrypt -A -S -C -W -i file.bin -o file.enc
 ```
 
-Algorithm flags can be combined under a single `-` (e.g., `-ASC`) or specified separately (`-A -S -C`). Both styles can be mixed. Algorithms are applied in command-line order. Each flag can only be used once per command. To apply the same algorithm multiple times, use random mode (`-n`).
+Algorithm flags can be combined under a single `-` (e.g., `-ASC`) or specified separately (`-A -S -C`). Both styles can be mixed. Algorithms are applied in command-line order.
 
 ### Random Algorithm Selection
 
