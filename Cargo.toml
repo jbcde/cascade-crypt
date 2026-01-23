@@ -74,6 +74,7 @@ anyhow = "1.0"
 
 # Security
 zeroize = { version = "1.8", features = ["derive"] }
+tempfile = "3.10"
 
 # Password input
 rpassword = "7"
