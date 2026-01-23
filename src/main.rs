@@ -66,9 +66,9 @@ fn expand_combined_flags(args: Vec<String>) -> Vec<String> {
 }
 
 use cascrypt::{
-    decrypt, decrypt_protected, decrypt_protected_with_progress, decrypt_with_progress,
-    encrypt, encrypt_protected, encrypt_protected_with_progress, encrypt_with_progress,
-    Algorithm, HybridKeypair, HybridPrivateKey, HybridPublicKey,
+    decrypt_protected_with_buffer_mode, decrypt_with_buffer_mode,
+    encrypt_protected_with_buffer_mode, encrypt_with_buffer_mode,
+    Algorithm, BufferMode, HybridKeypair, HybridPrivateKey, HybridPublicKey,
 };
 
 const ALL_ALGORITHMS: [Algorithm; 20] = [
@@ -131,6 +131,10 @@ struct Cli {
     /// List all available algorithms and exit
     #[arg(long = "list")]
     list: bool,
+
+    /// Buffer mode: 'ram' (force RAM), 'disk' (force disk), 'auto' (default, switches under pressure)
+    #[arg(long = "buffer", value_name = "MODE")]
+    buffer_mode: Option<String>,
 
     // ===== Original algorithms =====
     /// Use AES-256-GCM encryption [code: A]
@@ -510,6 +514,12 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("Output file required (-o)"))?;
 
+    // Parse buffer mode
+    let buffer_mode = match cli.buffer_mode.as_deref() {
+        Some(s) => s.parse::<BufferMode>().map_err(|e| anyhow::anyhow!(e))?,
+        None => BufferMode::Auto,
+    };
+
     // Read input
     let input_data = read_input(input)?;
 
@@ -523,25 +533,19 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
         if let Some(privkey_path) = &cli.privkey {
             let private_key = load_private_key(privkey_path)?;
             if !cli.silent { eprintln!("󰦝 Decrypting with protected header..."); }
-            if show_progress {
-                let pb = create_progress_bar(100, "󰌊 Decrypting");
-                let result = decrypt_protected_with_progress(&input_data, &password, &private_key, |cur, total| {
-                    pb.set_length(total as u64); pb.set_position(cur as u64);
-                }).context("Decryption failed")?;
-                pb.finish();
-                result
-            } else {
-                decrypt_protected(&input_data, &password, &private_key).context("Decryption failed")?
-            }
-        } else if show_progress {
-            let pb = create_progress_bar(100, "󰌊 Decrypting");
-            let result = decrypt_with_progress(&input_data, &password, |cur, total| {
-                pb.set_length(total as u64); pb.set_position(cur as u64);
+            let pb = if show_progress { Some(create_progress_bar(100, "󰌊 Decrypting")) } else { None };
+            let result = decrypt_protected_with_buffer_mode(&input_data, &password, &private_key, buffer_mode, |cur, total| {
+                if let Some(pb) = &pb { pb.set_length(total as u64); pb.set_position(cur as u64); }
             }).context("Decryption failed")?;
-            pb.finish();
+            if let Some(pb) = pb { pb.finish(); }
             result
         } else {
-            decrypt(&input_data, &password).context("Decryption failed")?
+            let pb = if show_progress { Some(create_progress_bar(100, "󰌊 Decrypting")) } else { None };
+            let result = decrypt_with_buffer_mode(&input_data, &password, buffer_mode, |cur, total| {
+                if let Some(pb) = &pb { pb.set_length(total as u64); pb.set_position(cur as u64); }
+            }).context("Decryption failed")?;
+            if let Some(pb) = pb { pb.finish(); }
+            result
         }
     } else {
         // Encrypt mode - get algorithms
@@ -596,27 +600,21 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
                     eprintln!("󰦝 Using protected header (hybrid X25519+Kyber encryption)");
                 }
             }
-            if show_progress {
-                let pb = create_progress_bar(algo_count as u64, "󰌆 Encrypting");
-                let result = encrypt_protected_with_progress(&input_data, &password, algorithms, &public_key, cli.lock, |cur, total| {
-                    pb.set_length(total as u64); pb.set_position(cur as u64);
-                }).context("Encryption failed")?;
-                pb.finish();
-                result
-            } else {
-                encrypt_protected(&input_data, &password, algorithms, &public_key, cli.lock).context("Encryption failed")?
-            }
+            let pb = if show_progress { Some(create_progress_bar(algo_count as u64, "󰌆 Encrypting")) } else { None };
+            let result = encrypt_protected_with_buffer_mode(&input_data, &password, algorithms, &public_key, cli.lock, buffer_mode, |cur, total| {
+                if let Some(pb) = &pb { pb.set_length(total as u64); pb.set_position(cur as u64); }
+            }).context("Encryption failed")?;
+            if let Some(pb) = pb { pb.finish(); }
+            result
         } else if cli.lock {
             anyhow::bail!("--lock requires --pubkey for protected header encryption");
-        } else if show_progress {
-            let pb = create_progress_bar(algo_count as u64, "󰌆 Encrypting");
-            let result = encrypt_with_progress(&input_data, &password, algorithms, |cur, total| {
-                pb.set_length(total as u64); pb.set_position(cur as u64);
-            }).context("Encryption failed")?;
-            pb.finish();
-            result
         } else {
-            encrypt(&input_data, &password, algorithms).context("Encryption failed")?
+            let pb = if show_progress { Some(create_progress_bar(algo_count as u64, "󰌆 Encrypting")) } else { None };
+            let result = encrypt_with_buffer_mode(&input_data, &password, algorithms, buffer_mode, |cur, total| {
+                if let Some(pb) = &pb { pb.set_length(total as u64); pb.set_position(cur as u64); }
+            }).context("Encryption failed")?;
+            if let Some(pb) = pb { pb.finish(); }
+            result
         }
     };
 

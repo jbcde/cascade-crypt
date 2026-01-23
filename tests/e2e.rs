@@ -609,3 +609,104 @@ fn test_progress_flag_works() {
 
     cleanup(&[input, encrypted, decrypted]);
 }
+
+// ============================================================================
+// Buffer Mode Tests
+// ============================================================================
+
+#[test]
+fn test_buffer_mode_ram() {
+    let input = create_temp_file("buffer_ram_input.txt", b"RAM buffer mode test data");
+    let encrypted = create_temp_file("buffer_ram_encrypted.bin", b"");
+    let decrypted = create_temp_file("buffer_ram_decrypted.txt", b"");
+
+    // Encrypt with RAM buffer mode
+    run_cascade_ok(&["-A", "-S", "--buffer", "ram", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "-k", "testpass", "-s"]);
+
+    // Decrypt with RAM buffer mode
+    run_cascade_ok(&["-d", "--buffer", "ram", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "-k", "testpass", "-s"]);
+
+    assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
+
+    cleanup(&[input, encrypted, decrypted]);
+}
+
+#[test]
+fn test_buffer_mode_disk() {
+    let input = create_temp_file("buffer_disk_input.txt", b"Disk buffer mode test data");
+    let encrypted = create_temp_file("buffer_disk_encrypted.bin", b"");
+    let decrypted = create_temp_file("buffer_disk_decrypted.txt", b"");
+
+    // Encrypt with disk buffer mode
+    run_cascade_ok(&["-A", "-S", "--buffer", "disk", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "-k", "testpass", "-s"]);
+
+    // Decrypt with disk buffer mode
+    run_cascade_ok(&["-d", "--buffer", "disk", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "-k", "testpass", "-s"]);
+
+    assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
+
+    cleanup(&[input, encrypted, decrypted]);
+}
+
+#[test]
+fn test_buffer_mode_auto() {
+    let input = create_temp_file("buffer_auto_input.txt", b"Auto buffer mode test data");
+    let encrypted = create_temp_file("buffer_auto_encrypted.bin", b"");
+    let decrypted = create_temp_file("buffer_auto_decrypted.txt", b"");
+
+    // Encrypt with auto buffer mode (explicit)
+    run_cascade_ok(&["-A", "-S", "--buffer", "auto", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "-k", "testpass", "-s"]);
+
+    // Decrypt with auto buffer mode (explicit)
+    run_cascade_ok(&["-d", "--buffer", "auto", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "-k", "testpass", "-s"]);
+
+    assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
+
+    cleanup(&[input, encrypted, decrypted]);
+}
+
+#[test]
+fn test_buffer_modes_produce_identical_decryption() {
+    // Encrypt with RAM mode, verify decryption works with any mode
+    let input = create_temp_file("buffer_compat_input.txt", b"Cross-buffer mode compatibility test");
+    let encrypted_ram = create_temp_file("buffer_compat_enc_ram.bin", b"");
+    let encrypted_disk = create_temp_file("buffer_compat_enc_disk.bin", b"");
+    let decrypted_ram = create_temp_file("buffer_compat_dec_ram.txt", b"");
+    let decrypted_disk = create_temp_file("buffer_compat_dec_disk.txt", b"");
+    let decrypted_cross = create_temp_file("buffer_compat_dec_cross.txt", b"");
+
+    // Encrypt with RAM mode
+    run_cascade_ok(&["-A", "-W", "--buffer", "ram", "-i", input.to_str().unwrap(), "-o", encrypted_ram.to_str().unwrap(), "-k", "testpass", "-s"]);
+
+    // Encrypt with disk mode
+    run_cascade_ok(&["-A", "-W", "--buffer", "disk", "-i", input.to_str().unwrap(), "-o", encrypted_disk.to_str().unwrap(), "-k", "testpass", "-s"]);
+
+    // Decrypt RAM-encrypted with RAM mode
+    run_cascade_ok(&["-d", "--buffer", "ram", "-i", encrypted_ram.to_str().unwrap(), "-o", decrypted_ram.to_str().unwrap(), "-k", "testpass", "-s"]);
+
+    // Decrypt disk-encrypted with disk mode
+    run_cascade_ok(&["-d", "--buffer", "disk", "-i", encrypted_disk.to_str().unwrap(), "-o", decrypted_disk.to_str().unwrap(), "-k", "testpass", "-s"]);
+
+    // Cross-mode: decrypt RAM-encrypted with disk mode
+    run_cascade_ok(&["-d", "--buffer", "disk", "-i", encrypted_ram.to_str().unwrap(), "-o", decrypted_cross.to_str().unwrap(), "-k", "testpass", "-s"]);
+
+    // All decryptions should produce identical original content
+    let original = fs::read(&input).unwrap();
+    assert_eq!(original, fs::read(&decrypted_ram).unwrap(), "RAM decrypt failed");
+    assert_eq!(original, fs::read(&decrypted_disk).unwrap(), "Disk decrypt failed");
+    assert_eq!(original, fs::read(&decrypted_cross).unwrap(), "Cross-mode decrypt failed");
+
+    cleanup(&[input, encrypted_ram, encrypted_disk, decrypted_ram, decrypted_disk, decrypted_cross]);
+}
+
+#[test]
+fn test_buffer_mode_invalid() {
+    let input = create_temp_file("buffer_invalid_input.txt", b"test");
+    let output = create_temp_file("buffer_invalid_output.bin", b"");
+
+    // Try invalid buffer mode
+    let result = run_cascade(&["-A", "--buffer", "invalid", "-i", input.to_str().unwrap(), "-o", output.to_str().unwrap(), "-k", "testpass", "-s"]);
+    assert!(!result.status.success(), "Invalid buffer mode should fail");
+
+    cleanup(&[input, output]);
+}

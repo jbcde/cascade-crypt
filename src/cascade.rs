@@ -4,6 +4,7 @@ use rayon::prelude::*;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
+use crate::buffer::{should_switch_to_disk, BufferMode, LayerBuffer, ProcessError};
 use crate::crypto::{self, Algorithm, CryptoError};
 use crate::encoder;
 use crate::header::{Argon2Params, Header, HeaderError};
@@ -40,6 +41,17 @@ pub enum CascadeError {
     NoAlgorithms,
     #[error("Encrypted header requires private key")]
     PrivateKeyRequired,
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+impl From<ProcessError<CryptoError>> for CascadeError {
+    fn from(err: ProcessError<CryptoError>) -> Self {
+        match err {
+            ProcessError::Io(e) => CascadeError::Io(e),
+            ProcessError::Crypto(e) => CascadeError::Crypto(e),
+        }
+    }
 }
 
 fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm, layer: usize, params: &Argon2Params) -> Result<Zeroizing<Vec<u8>>, CascadeError> {
@@ -75,18 +87,47 @@ fn derive_keys_parallel(
         .collect()
 }
 
-fn encrypt_layers<F>(data: &[u8], password: &[u8], algorithms: &[Algorithm], salt: &[u8], locked: bool, mut progress: F) -> Result<Vec<u8>, CascadeError>
-where F: FnMut(usize, usize) {
+fn encrypt_layers<F>(
+    data: &[u8],
+    password: &[u8],
+    algorithms: &[Algorithm],
+    salt: &[u8],
+    locked: bool,
+    buffer_mode: BufferMode,
+    mut progress: F,
+) -> Result<Vec<u8>, CascadeError>
+where
+    F: FnMut(usize, usize),
+{
     let total = algorithms.len();
     let keys = derive_keys_parallel(password, salt, algorithms, &Argon2Params::default())?;
     let encoded = encoder::encode(data).into_bytes();
-    let mut current = Zeroizing::new(if locked { _t::_x(&encoded) } else { encoded });
+    let initial = if locked { _t::_x(&encoded) } else { encoded };
+
+    // Initialize buffer based on mode
+    let mut buffer = match buffer_mode {
+        BufferMode::Disk => LayerBuffer::switch_to_disk(Zeroizing::new(initial))?,
+        BufferMode::Ram | BufferMode::Auto => LayerBuffer::new_ram(initial),
+    };
+
     for (i, algo) in algorithms.iter().enumerate() {
+        // Check memory pressure in auto mode (only when in RAM)
+        if buffer_mode == BufferMode::Auto && !buffer.is_disk() {
+            if let Ok(size) = buffer.len() {
+                if should_switch_to_disk(size) {
+                    // Try to switch to disk; if it fails, continue in RAM
+                    let _ = buffer.try_switch_to_disk();
+                }
+            }
+        }
+
         let key = &keys[i];
-        current = Zeroizing::new(crypto::encrypt(*algo, key, &current)?);
+        let algo_copy = *algo;
+        buffer.process(|data| crypto::encrypt(algo_copy, key, data))?;
         progress(i + 1, total);
     }
-    Ok(current.to_vec())
+
+    Ok(buffer.finalize()?)
 }
 
 #[must_use = "encrypted data must be used"]
@@ -97,10 +138,16 @@ pub fn encrypt(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>) -> Resu
 #[must_use = "encrypted data must be used"]
 pub fn encrypt_with_progress<F>(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
+    encrypt_with_buffer_mode(data, password, algorithms, BufferMode::Auto, progress)
+}
+
+#[must_use = "encrypted data must be used"]
+pub fn encrypt_with_buffer_mode<F>(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, buffer_mode: BufferMode, progress: F) -> Result<Vec<u8>, CascadeError>
+where F: FnMut(usize, usize) {
     if algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
     let mut salt = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut salt);
-    let encrypted = encrypt_layers(data, password, &algorithms, &salt, false, progress)?;
+    let encrypted = encrypt_layers(data, password, &algorithms, &salt, false, buffer_mode, progress)?;
     let mut result = Header::with_ciphertext(algorithms, salt, false, &encrypted).serialize().into_bytes();
     result.extend(encrypted);
     Ok(result)
@@ -114,10 +161,16 @@ pub fn encrypt_protected(data: &[u8], password: &[u8], algorithms: Vec<Algorithm
 #[must_use = "encrypted data must be used"]
 pub fn encrypt_protected_with_progress<F>(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, recipient_public: &HybridPublicKey, locked: bool, progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
+    encrypt_protected_with_buffer_mode(data, password, algorithms, recipient_public, locked, BufferMode::Auto, progress)
+}
+
+#[must_use = "encrypted data must be used"]
+pub fn encrypt_protected_with_buffer_mode<F>(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, recipient_public: &HybridPublicKey, locked: bool, buffer_mode: BufferMode, progress: F) -> Result<Vec<u8>, CascadeError>
+where F: FnMut(usize, usize) {
     if algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
     let mut salt = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut salt);
-    let encrypted = encrypt_layers(data, password, &algorithms, &salt, locked, progress)?;
+    let encrypted = encrypt_layers(data, password, &algorithms, &salt, locked, buffer_mode, progress)?;
     let mut result = Header::with_ciphertext(algorithms, salt, locked, &encrypted).serialize_encrypted(recipient_public)?.into_bytes();
     result.extend(encrypted);
     Ok(result)
@@ -131,10 +184,16 @@ pub fn decrypt(data: &[u8], password: &[u8]) -> Result<Vec<u8>, CascadeError> {
 #[must_use = "decrypted data must be used"]
 pub fn decrypt_with_progress<F>(data: &[u8], password: &[u8], progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
+    decrypt_with_buffer_mode(data, password, BufferMode::Auto, progress)
+}
+
+#[must_use = "decrypted data must be used"]
+pub fn decrypt_with_buffer_mode<F>(data: &[u8], password: &[u8], buffer_mode: BufferMode, progress: F) -> Result<Vec<u8>, CascadeError>
+where F: FnMut(usize, usize) {
     if Header::is_encrypted(data) { return Err(CascadeError::PrivateKeyRequired); }
     let (header, encrypted_data) = Header::parse(data)?;
     header.verify_ciphertext(encrypted_data)?;
-    decrypt_layers(&header, encrypted_data, password, progress)
+    decrypt_layers(&header, encrypted_data, password, buffer_mode, progress)
 }
 
 #[must_use = "decrypted data must be used"]
@@ -145,39 +204,73 @@ pub fn decrypt_protected(data: &[u8], password: &[u8], private_key: &HybridPriva
 #[must_use = "decrypted data must be used"]
 pub fn decrypt_protected_with_progress<F>(data: &[u8], password: &[u8], private_key: &HybridPrivateKey, progress: F) -> Result<Vec<u8>, CascadeError>
 where F: FnMut(usize, usize) {
+    decrypt_protected_with_buffer_mode(data, password, private_key, BufferMode::Auto, progress)
+}
+
+#[must_use = "decrypted data must be used"]
+pub fn decrypt_protected_with_buffer_mode<F>(data: &[u8], password: &[u8], private_key: &HybridPrivateKey, buffer_mode: BufferMode, progress: F) -> Result<Vec<u8>, CascadeError>
+where F: FnMut(usize, usize) {
     let (header, encrypted_data) = if Header::is_encrypted(data) {
         Header::parse_encrypted(data, private_key)?
     } else {
         Header::parse(data)?
     };
     header.verify_ciphertext(encrypted_data)?;
-    decrypt_layers(&header, encrypted_data, password, progress)
+    decrypt_layers(&header, encrypted_data, password, buffer_mode, progress)
 }
 
-fn decrypt_layers<F>(header: &Header, encrypted_data: &[u8], password: &[u8], mut progress: F) -> Result<Vec<u8>, CascadeError>
-where F: FnMut(usize, usize) {
-    if header.algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
+fn decrypt_layers<F>(
+    header: &Header,
+    encrypted_data: &[u8],
+    password: &[u8],
+    buffer_mode: BufferMode,
+    mut progress: F,
+) -> Result<Vec<u8>, CascadeError>
+where
+    F: FnMut(usize, usize),
+{
+    if header.algorithms.is_empty() {
+        return Err(CascadeError::NoAlgorithms);
+    }
     let total = header.algorithms.len();
     let keys = derive_keys_parallel(password, &header.salt, &header.algorithms, &header.argon2_params)?;
-    let mut current = Zeroizing::new(encrypted_data.to_vec());
+
+    // Initialize buffer based on mode
+    let mut buffer = match buffer_mode {
+        BufferMode::Disk => LayerBuffer::switch_to_disk(Zeroizing::new(encrypted_data.to_vec()))?,
+        BufferMode::Ram | BufferMode::Auto => LayerBuffer::new_ram(encrypted_data.to_vec()),
+    };
+
     for (i, algo) in header.algorithms.iter().rev().enumerate() {
+        // Check memory pressure in auto mode (only when in RAM)
+        if buffer_mode == BufferMode::Auto && !buffer.is_disk() {
+            if let Ok(size) = buffer.len() {
+                if should_switch_to_disk(size) {
+                    // Try to switch to disk; if it fails, continue in RAM
+                    let _ = buffer.try_switch_to_disk();
+                }
+            }
+        }
+
         // Map reverse iteration index back to original layer index
         let key_index = total - 1 - i;
         let key = &keys[key_index];
-        current = Zeroizing::new(crypto::decrypt(*algo, key, &current)?);
+        let algo_copy = *algo;
+        buffer.process(|data| crypto::decrypt(algo_copy, key, data))?;
         progress(i + 1, total);
     }
+
+    let decrypted = Zeroizing::new(buffer.finalize()?);
     let decrypted = if header.locked {
-        Zeroizing::new(_t::_x(&current))
+        Zeroizing::new(_t::_x(&decrypted))
     } else {
-        current
+        decrypted
     };
+
     // Convert to string, discarding error details to avoid leaking sensitive bytes
     let decoded_str = String::from_utf8(decrypted.to_vec())
         .map(Zeroizing::new)
-        .map_err(|_| CascadeError::Crypto(
-            CryptoError::DecryptionFailed("Invalid UTF-8".into())
-        ))?;
+        .map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed("Invalid UTF-8".into())))?;
     Ok(encoder::decode(&decoded_str)?)
 }
 
