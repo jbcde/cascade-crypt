@@ -300,6 +300,10 @@ macro_rules! cipher05_cbc_impl {
             if ciphertext.len() < $block_size { return Err(CryptoError::InvalidNonce); }
             let cipher = <$cipher>::new_from_slice(key).map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
             let (iv, data) = ciphertext.split_at($block_size);
+            // Validate ciphertext length is non-empty and multiple of block size
+            if data.is_empty() || data.len() % $block_size != 0 {
+                return Err(CryptoError::DecryptionFailed("Invalid ciphertext length".into()));
+            }
             let mut buffer = data.to_vec();
             let mut prev = [0u8; $block_size];
             prev.copy_from_slice(iv);
@@ -441,5 +445,27 @@ mod tests {
         let e1 = encrypt(Algorithm::Aes256, &key, plaintext).unwrap();
         let e2 = encrypt(Algorithm::Aes256, &key, plaintext).unwrap();
         assert_ne!(e1, e2);
+    }
+
+    #[test]
+    fn test_truncated_ciphertext_returns_error() {
+        // Verify truncated ciphertext returns error instead of panicking.
+        // This tests the cipher05_cbc_impl ciphers which had a panic bug.
+        let algos = [
+            (Algorithm::Threefish256, 32usize),
+            (Algorithm::Rc6, 16),
+            (Algorithm::Magma, 32),
+            (Algorithm::Speck128_256, 32),
+            (Algorithm::Gift128, 16),
+        ];
+        for (algo, key_size) in algos {
+            let key = vec![0x42u8; key_size];
+            let plaintext = b"Test data";
+            let encrypted = encrypt(algo, &key, plaintext).unwrap();
+            // Truncate to leave partial block (IV + partial data)
+            let truncated = &encrypted[..encrypted.len() - 3];
+            let result = decrypt(algo, &key, truncated);
+            assert!(result.is_err(), "{:?} should error on truncated ciphertext", algo);
+        }
     }
 }

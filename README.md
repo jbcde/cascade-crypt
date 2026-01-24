@@ -206,6 +206,10 @@ Tested on 1MB file through all 20 ciphers (Intel Xeon E-2176M @ 2.70GHz):
 
 Bottlenecks: Argon2id key derivation (20 unique keys) and Serpent cipher.
 
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for version history and security updates.
+
 ## License
 
 MIT
