@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 fn init_thread_pool() {
     let cores = std::thread::available_parallelism()
@@ -340,7 +340,6 @@ fn has_algorithm_flags(cli: &Cli) -> bool {
 }
 
 fn get_password(cli: &mut Cli) -> Result<Zeroizing<Vec<u8>>> {
-    use zeroize::Zeroize;
     // Priority: keyfile > key argument > interactive prompt
     if let Some(keyfile) = &cli.keyfile {
         let key = fs::read(keyfile).context("Failed to read keyfile")?;
