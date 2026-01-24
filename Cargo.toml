@@ -50,9 +50,9 @@ hkdf = "0.12"
 # Hashing
 sha2 = "0.10"
 
-# Asymmetric encryption (hybrid X25519 + Kyber)
+# Asymmetric encryption (hybrid X25519 + ML-KEM)
 x25519-dalek = { version = "2", features = ["static_secrets"] }
-pqcrypto-kyber = "0.8.1"
+pqcrypto-mlkem = "0.1"
 pqcrypto-traits = "0.3"
 
 # Serialization
@@ -80,7 +80,7 @@ tempfile = "3.10"
 rpassword = "7"
 
 # Progress bar
-indicatif = "0.17"
+indicatif = "0.18"
 
 [profile.release]
 opt-level = "z"         # Optimize for size

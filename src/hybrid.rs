@@ -1,8 +1,8 @@
-//! Hybrid X25519 + Kyber1024 asymmetric encryption for header protection
+//! Hybrid X25519 + ML-KEM-1024 asymmetric encryption for header protection
 //!
 //! This module provides post-quantum secure encryption by combining:
 //! - X25519: Fast elliptic curve Diffie-Hellman (classical security)
-//! - Kyber1024: NIST-selected post-quantum KEM (quantum resistance)
+//! - ML-KEM-1024: NIST-standardized post-quantum KEM (quantum resistance)
 //!
 //! Both shared secrets are combined via HKDF to derive a symmetric key.
 
@@ -11,7 +11,7 @@ use chacha20poly1305::{
     ChaCha20Poly1305, Nonce,
 };
 use hkdf::Hkdf;
-use pqcrypto_kyber::kyber1024;
+use pqcrypto_mlkem::mlkem1024;
 use pqcrypto_traits::kem::{Ciphertext, PublicKey, SecretKey, SharedSecret};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
@@ -36,14 +36,14 @@ pub enum HybridError {
     Serialization(String),
 }
 
-/// Combined public key (X25519 + Kyber1024)
+/// Combined public key (X25519 + ML-KEM-1024)
 #[derive(Serialize, Deserialize, Clone)]
 pub struct HybridPublicKey {
     pub x25519: [u8; 32],
     pub kyber: Vec<u8>,
 }
 
-/// Combined private key (X25519 + Kyber1024)
+/// Combined private key (X25519 + ML-KEM-1024)
 /// Automatically zeroed on drop to prevent key material from persisting in memory.
 #[derive(Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct HybridPrivateKey {
@@ -85,7 +85,7 @@ impl HybridKeypair {
     pub fn generate() -> Self {
         let x25519_secret = StaticSecret::random_from_rng(rand::thread_rng());
         let x25519_public = X25519Public::from(&x25519_secret);
-        let (kyber_pk, kyber_sk) = kyber1024::keypair();
+        let (kyber_pk, kyber_sk) = mlkem1024::keypair();
         HybridKeypair {
             public: HybridPublicKey { x25519: x25519_public.to_bytes(), kyber: kyber_pk.as_bytes().to_vec() },
             private: HybridPrivateKey { x25519: *x25519_secret.as_bytes(), kyber: kyber_sk.as_bytes().to_vec() },
@@ -93,7 +93,7 @@ impl HybridKeypair {
     }
 }
 
-/// Derive a symmetric key from X25519 and Kyber shared secrets
+/// Derive a symmetric key from X25519 and ML-KEM shared secrets
 fn derive_symmetric_key(x25519_shared: &[u8], kyber_shared: &[u8]) -> Result<Zeroizing<[u8; 32]>, HybridError> {
     // Combine both shared secrets
     let mut combined = Zeroizing::new(Vec::with_capacity(x25519_shared.len() + kyber_shared.len()));
@@ -108,7 +108,7 @@ fn derive_symmetric_key(x25519_shared: &[u8], kyber_shared: &[u8]) -> Result<Zer
     Ok(key)
 }
 
-/// Encrypt data using hybrid X25519 + Kyber1024
+/// Encrypt data using hybrid X25519 + ML-KEM-1024
 pub fn encrypt(plaintext: &[u8], recipient_public: &HybridPublicKey) -> Result<(EncapsulatedKeys, Vec<u8>), HybridError> {
     // Generate ephemeral X25519 keypair
     let x25519_ephemeral = EphemeralSecret::random_from_rng(rand::thread_rng());
@@ -118,10 +118,10 @@ pub fn encrypt(plaintext: &[u8], recipient_public: &HybridPublicKey) -> Result<(
     let recipient_x25519 = X25519Public::from(recipient_public.x25519);
     let x25519_shared = x25519_ephemeral.diffie_hellman(&recipient_x25519);
 
-    // Perform Kyber encapsulation
-    let kyber_pk = kyber1024::PublicKey::from_bytes(&recipient_public.kyber)
+    // Perform ML-KEM encapsulation
+    let kyber_pk = mlkem1024::PublicKey::from_bytes(&recipient_public.kyber)
         .map_err(|_| HybridError::InvalidPublicKey)?;
-    let (kyber_shared, kyber_ciphertext) = kyber1024::encapsulate(&kyber_pk);
+    let (kyber_shared, kyber_ciphertext) = mlkem1024::encapsulate(&kyber_pk);
 
     // Derive symmetric key from both shared secrets
     let symmetric_key = derive_symmetric_key(x25519_shared.as_bytes(), kyber_shared.as_bytes())?;
@@ -147,7 +147,7 @@ pub fn encrypt(plaintext: &[u8], recipient_public: &HybridPublicKey) -> Result<(
     Ok((encapsulated, ciphertext))
 }
 
-/// Decrypt data using hybrid X25519 + Kyber1024
+/// Decrypt data using hybrid X25519 + ML-KEM-1024
 pub fn decrypt(
     encapsulated: &EncapsulatedKeys,
     ciphertext: &[u8],
@@ -158,12 +158,12 @@ pub fn decrypt(
     let x25519_ephemeral_public = X25519Public::from(encapsulated.x25519_ephemeral);
     let x25519_shared = x25519_secret.diffie_hellman(&x25519_ephemeral_public);
 
-    // Perform Kyber decapsulation
-    let kyber_sk = kyber1024::SecretKey::from_bytes(&private_key.kyber)
+    // Perform ML-KEM decapsulation
+    let kyber_sk = mlkem1024::SecretKey::from_bytes(&private_key.kyber)
         .map_err(|_| HybridError::InvalidPrivateKey)?;
-    let kyber_ct = kyber1024::Ciphertext::from_bytes(&encapsulated.kyber_ciphertext)
-        .map_err(|_| HybridError::Decryption("Invalid Kyber ciphertext".into()))?;
-    let kyber_shared = kyber1024::decapsulate(&kyber_ct, &kyber_sk);
+    let kyber_ct = mlkem1024::Ciphertext::from_bytes(&encapsulated.kyber_ciphertext)
+        .map_err(|_| HybridError::Decryption("Invalid ML-KEM ciphertext".into()))?;
+    let kyber_shared = mlkem1024::decapsulate(&kyber_ct, &kyber_sk);
 
     // Derive symmetric key from both shared secrets
     let symmetric_key = derive_symmetric_key(x25519_shared.as_bytes(), kyber_shared.as_bytes())?;
