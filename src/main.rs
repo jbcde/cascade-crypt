@@ -339,15 +339,18 @@ fn has_algorithm_flags(cli: &Cli) -> bool {
         || cli.gift > 0 || cli.ascon > 0
 }
 
-fn get_password(cli: &Cli) -> Result<Zeroizing<Vec<u8>>> {
+fn get_password(cli: &mut Cli) -> Result<Zeroizing<Vec<u8>>> {
+    use zeroize::Zeroize;
     // Priority: keyfile > key argument > interactive prompt
     if let Some(keyfile) = &cli.keyfile {
         let key = fs::read(keyfile).context("Failed to read keyfile")?;
         return Ok(Zeroizing::new(key));
     }
 
-    if let Some(key) = &cli.key {
-        return Ok(Zeroizing::new(key.as_bytes().to_vec()));
+    if let Some(mut key) = cli.key.take() {
+        let bytes = key.as_bytes().to_vec();
+        key.zeroize();
+        return Ok(Zeroizing::new(bytes));
     }
 
     // Interactive prompt
@@ -497,7 +500,7 @@ fn cmd_list_algorithms() {
     println!("Repeat flags for multiple layers: -AAA or -A -A -A");
 }
 
-fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
+fn cmd_encrypt_decrypt(mut cli: Cli) -> Result<()> {
     // Handle --list before requiring input/output
     if cli.list {
         cmd_list_algorithms();
@@ -507,11 +510,11 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
     // Validate required arguments for encrypt/decrypt mode
     let input = cli
         .input
-        .as_ref()
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("Input file required (-i)"))?;
     let output = cli
         .output
-        .as_ref()
+        .clone()
         .ok_or_else(|| anyhow::anyhow!("Output file required (-o)"))?;
 
     // Parse buffer mode
@@ -521,10 +524,10 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
     };
 
     // Read input
-    let input_data = read_input(input)?;
+    let input_data = read_input(&input)?;
 
     // Get password
-    let password = get_password(&cli)?;
+    let password = get_password(&mut cli)?;
 
     let show_progress = cli.progress && !cli.silent;
 
@@ -619,7 +622,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
     };
 
     // Write output
-    write_output(output, &output_data)?;
+    write_output(&output, &output_data)?;
 
     if !cli.silent {
         if cli.decrypt {

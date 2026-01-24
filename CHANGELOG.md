@@ -4,6 +4,17 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.2.2] - 2026-01-24
+
+### Changed
+- `Header::new()` is now deprecated; use `Header::with_ciphertext()` instead
+- `Header::verify_ciphertext()` now returns `MissingCiphertextHash` error if header lacks integrity hash
+
+### Security
+- **Fixed:** CLI password argument (`-k`) is now explicitly zeroized after use. Previously, the password string remained in heap memory until the allocator reused that space, potentially exposing it to memory dumps.
+- **Fixed:** Library API no longer allows silent bypass of integrity verification. `Header::new()` is deprecated, and `verify_ciphertext()` fails explicitly if no hash is present.
+- **Fixed:** Truncated/malformed ciphertext now returns an error instead of panicking. Affected ciphers: Threefish, RC6, Magma, Speck, GIFT (all using manual CBC implementation).
+
 ## [0.2.1] - 2026-01-09
 
 ### Added

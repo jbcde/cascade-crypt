@@ -39,6 +39,8 @@ pub enum HeaderError {
     HashMismatch,
     #[error("Ciphertext hash mismatch - data may be corrupted or tampered")]
     CiphertextHashMismatch,
+    #[error("Missing ciphertext hash - header created without integrity protection")]
+    MissingCiphertextHash,
     #[error("Missing salt")]
     MissingSalt,
     #[error("Decryption required - header is encrypted")]
@@ -71,10 +73,20 @@ pub struct Header {
 }
 
 impl Header {
+    /// Creates a header without ciphertext integrity hash.
+    ///
+    /// # Deprecated
+    /// Use [`Header::with_ciphertext`] instead to ensure integrity protection.
+    /// Headers created with this method will fail verification in `verify_ciphertext()`.
+    #[deprecated(since = "0.2.2", note = "Use Header::with_ciphertext() for integrity protection")]
     pub fn new(algorithms: Vec<Algorithm>, salt: [u8; 32], locked: bool) -> Self {
         Self { algorithms, salt, locked, ciphertext_hash: None, argon2_params: Argon2Params::default() }
     }
 
+    /// Creates a header with ciphertext integrity hash.
+    ///
+    /// The SHA-256 hash of the ciphertext is stored in the header and verified
+    /// during decryption to detect tampering or corruption.
     pub fn with_ciphertext(algorithms: Vec<Algorithm>, salt: [u8; 32], locked: bool, ciphertext: &[u8]) -> Self {
         let hash = Sha256::digest(ciphertext);
         Self { algorithms, salt, locked, ciphertext_hash: Some(hash.into()), argon2_params: Argon2Params::default() }
@@ -156,13 +168,16 @@ impl Header {
         }
     }
 
-    /// Verify that the ciphertext matches the hash stored in the header
+    /// Verify that the ciphertext matches the hash stored in the header.
+    ///
+    /// # Errors
+    /// - `MissingCiphertextHash` if header was created without integrity protection
+    /// - `CiphertextHashMismatch` if ciphertext has been tampered with or corrupted
     pub fn verify_ciphertext(&self, ciphertext: &[u8]) -> Result<(), HeaderError> {
-        if let Some(expected) = &self.ciphertext_hash {
-            let actual: [u8; 32] = Sha256::digest(ciphertext).into();
-            if &actual != expected {
-                return Err(HeaderError::CiphertextHashMismatch);
-            }
+        let expected = self.ciphertext_hash.ok_or(HeaderError::MissingCiphertextHash)?;
+        let actual: [u8; 32] = Sha256::digest(ciphertext).into();
+        if actual != expected {
+            return Err(HeaderError::CiphertextHashMismatch);
         }
         Ok(())
     }
@@ -323,7 +338,7 @@ mod tests {
 
     #[test]
     fn test_algo_codes() {
-        let header = Header::new(vec![Algorithm::Aes256, Algorithm::Serpent, Algorithm::Twofish], [0u8; 32], false);
+        let header = Header::with_ciphertext(vec![Algorithm::Aes256, Algorithm::Serpent, Algorithm::Twofish], [0u8; 32], false, b"dummy");
         assert_eq!(header.algo_codes(), "ASW");
     }
 
