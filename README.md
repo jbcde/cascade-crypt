@@ -13,7 +13,7 @@ Cascading binary encryption tool with user-controlled algorithm ordering. Encryp
 - **Auto-decryption** - header stores algorithm order, decryption reverses automatically
 - **Argon2id key derivation** - unique keys derived per algorithm layer
 - **SHA-256 integrity** - header hash detects tampering
-- **Hybrid header protection** - optional X25519 + Kyber1024 encryption hides algorithm order
+- **Hybrid header protection** - optional X25519 + ML-KEM-1024 encryption hides algorithm order
 
 ## Installation
 
@@ -97,7 +97,7 @@ With a plaintext header, an attacker knows they need to break AES â†’ Serpent â†
 
 ### Key Generation
 
-Generate a hybrid keypair (X25519 + Kyber1024):
+Generate a hybrid keypair (X25519 + ML-KEM-1024):
 
 ```bash
 # Generate keypair and export public key
@@ -109,7 +109,7 @@ cascrypt export-pubkey -i my.keypair -o my.pubkey
 
 The keypair combines:
 - **X25519**: Classical elliptic curve Diffie-Hellman (256-bit security)
-- **Kyber1024**: Post-quantum lattice-based KEM (NIST Level 5, quantum-resistant)
+- **ML-KEM-1024**: Post-quantum lattice-based KEM (NIST FIPS 203, quantum-resistant)
 
 ### Protected Encryption
 
@@ -158,7 +158,7 @@ Error: Encrypted header requires private key
 
 - **Version**: 2
 - **E**: Marker for encrypted header
-- **Encapsulated keys**: X25519 ephemeral public key + Kyber ciphertext (base64)
+- **Encapsulated keys**: X25519 ephemeral public key + ML-KEM ciphertext (base64)
 - **Encrypted payload**: Algorithm codes + salt encrypted with ChaCha20-Poly1305 (base64)
 - **SHA-256**: Hash of encrypted components
 

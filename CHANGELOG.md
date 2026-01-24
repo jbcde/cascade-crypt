@@ -4,6 +4,19 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.3.0] - 2026-01-24
+
+### Changed
+- **BREAKING:** Migrated post-quantum KEM from Kyber1024 to ML-KEM-1024 (NIST FIPS 203)
+- Updated `indicatif` to 0.18 (fixes unmaintained `number_prefix` dependency)
+
+### Breaking Changes
+- **Protected headers created with v0.2.x cannot be decrypted with v0.3.0.** Files encrypted with `--pubkey` using Kyber1024 are incompatible with the new ML-KEM-1024 implementation. Files with plaintext headers (no `--pubkey`) are unaffected.
+- If you have files with protected headers, decrypt them with v0.2.x before upgrading, then re-encrypt with v0.3.0.
+
+### Security
+- Resolved `cargo audit` warnings for unmaintained dependencies (`pqcrypto-kyber`, `number_prefix`)
+
 ## [0.2.2] - 2026-01-24
 
 ### Changed
