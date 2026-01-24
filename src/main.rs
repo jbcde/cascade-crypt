@@ -103,7 +103,7 @@ const ALL_ALGORITHMS: [Algorithm; 20] = [
     Algorithm codes: A=AES, T=3DES, W=Twofish, S=Serpent, C=ChaCha20, X=XChaCha20,\n\
     M=Camellia, B=Blowfish, F=CAST5, I=IDEA, R=ARIA, 4=SM4, K=Kuznyechik, E=SEED, 3=Threefish,\n\
     6=RC6, G=Magma, P=Speck, J=GIFT, N=Ascon\n\n\
-    Use 'keygen' subcommand to generate hybrid X25519+Kyber keypairs for header protection.")]
+    Use 'keygen' subcommand to generate hybrid X25519+ML-KEM keypairs for header protection.")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -249,7 +249,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Generate a new hybrid X25519+Kyber keypair for header protection
+    /// Generate a new hybrid X25519+ML-KEM keypair for header protection
     Keygen {
         /// Output file for the keypair (JSON format)
         #[arg(short = 'o', long = "output", required = true)]
@@ -433,7 +433,7 @@ fn create_progress_bar(total: u64, msg: &str) -> ProgressBar {
 }
 
 fn cmd_keygen(output: &Path, export_pubkey: Option<&Path>) -> Result<()> {
-    eprintln!("󰌆 Generating hybrid X25519 + Kyber1024 keypair...");
+    eprintln!("󰌆 Generating hybrid X25519 + ML-KEM-1024 keypair...");
 
     let keypair = HybridKeypair::generate();
     let json = keypair.to_json().context("Failed to serialize keypair")?;
@@ -454,7 +454,7 @@ fn cmd_keygen(output: &Path, export_pubkey: Option<&Path>) -> Result<()> {
 
     eprintln!("\n󰯄 Keypair contains:");
     eprintln!("  󰻧 X25519 (classical elliptic curve)");
-    eprintln!("  󱉧 Kyber1024 (post-quantum lattice-based)");
+    eprintln!("  󱉧 ML-KEM-1024 (post-quantum lattice-based)");
     eprintln!("\n󰒍 Share the public key with others for encrypted headers.");
     eprintln!("󰌾 Keep the full keypair private for decryption.");
 
@@ -599,7 +599,7 @@ fn cmd_encrypt_decrypt(mut cli: Cli) -> Result<()> {
                 if cli.lock {
                     eprintln!("󰌾 Using protected header with puzzle lock 󱡅");
                 } else {
-                    eprintln!("󰦝 Using protected header (hybrid X25519+Kyber encryption)");
+                    eprintln!("󰦝 Using protected header (hybrid X25519+ML-KEM encryption)");
                 }
             }
             let pb = if show_progress { Some(create_progress_bar(algo_count as u64, "󰌆 Encrypting")) } else { None };
