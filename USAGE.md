@@ -16,7 +16,7 @@ cascrypt -d -i output.enc -o decrypted.bin -k "password"
 cascrypt [OPTIONS] [COMMAND]
 
 COMMANDS:
-    keygen          Generate hybrid X25519+Kyber keypair
+    keygen          Generate hybrid X25519+ML-KEM keypair
     export-pubkey   Export public key from keypair file
     help            Print help information
 
@@ -193,7 +193,7 @@ cascrypt export-pubkey -i my.keypair -o my.pub
 
 The keypair uses:
 - **X25519**: Classical elliptic curve (256-bit security)
-- **Kyber1024**: Post-quantum lattice KEM (NIST Level 5)
+- **ML-KEM-1024**: Post-quantum lattice KEM (NIST FIPS 203)
 
 ### Encrypt with Protected Header
 
