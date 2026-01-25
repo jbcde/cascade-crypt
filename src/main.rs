@@ -12,11 +12,15 @@ fn init_thread_pool() {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
+    // Use half of available cores to leave headroom for system/IO
     let threads = (cores / 2).max(1);
-    rayon::ThreadPoolBuilder::new()
+    if let Err(e) = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
         .build_global()
-        .ok();
+    {
+        // Thread pool already initialized or resource error - continue with defaults
+        eprintln!("Warning: Could not configure thread pool: {}", e);
+    }
 }
 
 /// All algorithm short flag characters
@@ -330,6 +334,13 @@ fn generate_random_algorithms(count: usize) -> Vec<Algorithm> {
     (0..count).map(|_| *ALL_ALGORITHMS.choose(&mut rng).unwrap()).collect()
 }
 
+/// Check if an algorithm provides authenticated encryption (AEAD)
+fn is_aead(algo: Algorithm) -> bool {
+    matches!(algo,
+        Algorithm::Aes256 | Algorithm::ChaCha20Poly1305 |
+        Algorithm::XChaCha20Poly1305 | Algorithm::Ascon128)
+}
+
 /// Check if any individual algorithm flags were specified
 fn has_algorithm_flags(cli: &Cli) -> bool {
     cli.aes > 0 || cli.triple_des > 0 || cli.twofish > 0 || cli.serpent > 0
@@ -487,12 +498,9 @@ fn cmd_list_algorithms() {
             .find(|(_, a)| *a == algo)
             .map(|(l, _)| &l[2..])  // strip "--" prefix
             .unwrap_or("");
-        let aead = matches!(algo,
-            Algorithm::Aes256 | Algorithm::ChaCha20Poly1305 |
-            Algorithm::XChaCha20Poly1305 | Algorithm::Ascon128);
         println!("  -{:<4} --{:<12} {:<21} {:<7} {}-bit",
             algo.code(), long, algo.name(),
-            if aead { "AEAD" } else { "Block" },
+            if is_aead(algo) { "AEAD" } else { "Block" },
             algo.key_size() * 8);
     }
     println!("\nUse flags in any order. Combine short flags: -ASC or -A -S -C");
@@ -591,6 +599,12 @@ fn cmd_encrypt_decrypt(mut cli: Cli) -> Result<()> {
                     format!(": {}", algorithms.iter().map(Algorithm::name).collect::<Vec<_>>().join(" → "))
                 } else { String::new() }
             );
+            // Warn if outer layer lacks authentication
+            if let Some(last) = algorithms.last() {
+                if !is_aead(*last) {
+                    eprintln!("󰀦 Warning: Outer layer ({}) is not AEAD - consider ending with -A, -C, -X, or -N for authentication", last.name());
+                }
+            }
         }
 
         if let Some(pubkey_path) = &cli.pubkey {

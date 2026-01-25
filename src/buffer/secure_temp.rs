@@ -60,14 +60,14 @@ impl SecureTempFile {
     /// Note: This consumes self. The Drop impl handles cleanup if this isn't called.
     pub fn secure_delete(mut self) -> io::Result<()> {
         self.secure_overwrite()?;
-        if let Some(path) = self.path.take() {
-            // File handle will be closed when self is dropped after this function returns
-            // We need to sync before closing
-            self.file.sync_all()?;
-            // The actual file deletion happens here, then self drops with path = None
-            // so Drop won't try to delete again
-            drop(self);
-            std::fs::remove_file(&path)?;
+        self.file.sync_all()?;
+        // Take path to prevent Drop from trying to delete again
+        let path = self.path.take();
+        // self will be dropped here, closing the file handle
+        // Then we delete the file
+        drop(self);
+        if let Some(p) = path {
+            std::fs::remove_file(&p)?;
         }
         Ok(())
     }
