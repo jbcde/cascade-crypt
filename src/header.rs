@@ -7,8 +7,8 @@ use crate::crypto::Algorithm;
 use crate::hybrid::{self, EncapsulatedKeys, HybridPrivateKey, HybridPublicKey};
 
 const MAGIC: &str = "CCRYPT";
-const VERSION_PLAIN: u8 = 5;
-const VERSION_ENCRYPTED: u8 = 6;
+const VERSION_PLAIN: u8 = 7;
+const VERSION_ENCRYPTED: u8 = 8;
 
 /// Argon2 key derivation parameters stored in header for forward compatibility
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,10 +18,14 @@ pub struct Argon2Params {
     pub p_cost: u32,  // Parallelism
 }
 
+// Argon2id defaults (match argon2 crate defaults)
+const ARGON2_M_COST: u32 = 19456;  // ~19 MiB memory
+const ARGON2_T_COST: u32 = 2;      // 2 iterations
+const ARGON2_P_COST: u32 = 1;      // 1 parallel lane
+
 impl Default for Argon2Params {
     fn default() -> Self {
-        // Match argon2 crate defaults
-        Self { m_cost: 19456, t_cost: 2, p_cost: 1 }
+        Self { m_cost: ARGON2_M_COST, t_cost: ARGON2_T_COST, p_cost: ARGON2_P_COST }
     }
 }
 
@@ -109,7 +113,7 @@ impl Header {
         if let Some(ct_hash) = &self.ciphertext_hash {
             h.update(ct_hash);
         }
-        hex::encode(&h.finalize()[..16])
+        hex::encode(&h.finalize())
     }
 
     #[must_use]
@@ -144,7 +148,7 @@ impl Header {
         h.update(&ct_b64);
         h.update(&ct_hash_hex);
 
-        Ok(format!("[{}|{}|E|{}|{}|{}|{}]\n", MAGIC, VERSION_ENCRYPTED, encap_b64, ct_b64, ct_hash_hex, hex::encode(&h.finalize()[..16])))
+        Ok(format!("[{}|{}|E|{}|{}|{}|{}]\n", MAGIC, VERSION_ENCRYPTED, encap_b64, ct_b64, ct_hash_hex, hex::encode(&h.finalize())))
     }
 
     pub fn parse(data: &[u8]) -> Result<(Self, &[u8]), HeaderError> {
@@ -195,7 +199,7 @@ impl Header {
         h.update(parts[3]);
         h.update(parts[4]);
         h.update(parts[5]);
-        if parts[6] != hex::encode(&h.finalize()[..16]) {
+        if parts[6] != hex::encode(&h.finalize()) {
             return Err(HeaderError::HashMismatch);
         }
 
@@ -215,7 +219,7 @@ impl Header {
     #[must_use]
     pub fn is_encrypted(data: &[u8]) -> bool {
         parse_header_line(data)
-            .map(|(p, _)| p.len() >= 3 && p[0] == MAGIC && p[1] == "6" && p[2] == "E")
+            .map(|(p, _)| p.len() >= 3 && p[0] == MAGIC && p[1] == "8" && p[2] == "E")
             .unwrap_or(false)
     }
 }
@@ -253,6 +257,7 @@ fn parse_argon2(s: &str) -> Result<Argon2Params, HeaderError> {
     })
 }
 
+/// Minimal hex encoding/decoding to avoid external dependency.
 mod hex {
     const HEX_CHARS: &[u8; 16] = b"0123456789abcdef";
 

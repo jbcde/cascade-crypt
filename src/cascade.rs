@@ -115,8 +115,8 @@ where
         if buffer_mode == BufferMode::Auto && !buffer.is_disk() {
             if let Ok(size) = buffer.len() {
                 if should_switch_to_disk(size) {
-                    // Try to switch to disk; if it fails, continue in RAM
-                    let _ = buffer.try_switch_to_disk();
+                    // Memory pressure detected - switch to disk or fail
+                    buffer.try_switch_to_disk()?;
                 }
             }
         }
@@ -246,8 +246,8 @@ where
         if buffer_mode == BufferMode::Auto && !buffer.is_disk() {
             if let Ok(size) = buffer.len() {
                 if should_switch_to_disk(size) {
-                    // Try to switch to disk; if it fails, continue in RAM
-                    let _ = buffer.try_switch_to_disk();
+                    // Memory pressure detected - switch to disk or fail
+                    buffer.try_switch_to_disk()?;
                 }
             }
         }
@@ -267,11 +267,16 @@ where
         decrypted
     };
 
-    // Convert to string, discarding error details to avoid leaking sensitive bytes
+    // Convert to string, discarding error details to avoid leaking sensitive bytes.
+    // Wrong password produces garbage that fails UTF-8/base64 validation.
     let decoded_str = String::from_utf8(decrypted.to_vec())
         .map(Zeroizing::new)
-        .map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed("Invalid UTF-8".into())))?;
-    Ok(encoder::decode(&decoded_str)?)
+        .map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed(
+            "Decryption failed - wrong password or corrupted data".into()
+        )))?;
+    encoder::decode(&decoded_str).map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed(
+        "Decryption failed - wrong password or corrupted data".into()
+    )))
 }
 
 #[cfg(test)]

@@ -384,15 +384,15 @@ done
 
 ## File Format
 
-### Version 1 (Plaintext Header)
+### Version 7 (Plaintext Header)
 ```
-[CCRYPT|1|<algo_codes>|<salt>|<hash>]
+[CCRYPT|7|<algo_codes>|<salt>|<argon2_params>|<ciphertext_hash>|<header_hash>]
 <encrypted_data>
 ```
 
-### Version 2 (Protected Header)
+### Version 8 (Protected Header)
 ```
-[CCRYPT|2|E|<encapsulated_keys>|<encrypted_metadata>|<hash>]
+[CCRYPT|8|E|<encapsulated_keys>|<encrypted_metadata>|<ciphertext_hash>|<header_hash>]
 <encrypted_data>
 ```
 
