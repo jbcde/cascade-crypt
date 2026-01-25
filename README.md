@@ -139,9 +139,9 @@ Error: Encrypted header requires private key
 
 ## File Format
 
-### Version 1 (Plaintext Header)
+### Version 7 (Plaintext Header)
 ```
-[CCRYPT|1|ASCX|<salt_hex>|<sha256>]
+[CCRYPT|7|ASCX|<salt_hex>|<argon2_params>|<ciphertext_hash>|<header_hash>]
 <encrypted payload>
 ```
 
@@ -150,13 +150,13 @@ Error: Encrypted header requires private key
 - **Salt**: 32-byte random salt (hex encoded)
 - **SHA-256**: Hash of algorithm codes + salt
 
-### Version 2 (Encrypted Header)
+### Version 8 (Encrypted Header)
 ```
-[CCRYPT|2|E|<encapsulated_keys_b64>|<encrypted_payload_b64>|<sha256>]
+[CCRYPT|8|E|<encapsulated_keys_b64>|<encrypted_payload_b64>|<ciphertext_hash>|<header_hash>]
 <encrypted payload>
 ```
 
-- **Version**: 2
+- **Version**: 8
 - **E**: Marker for encrypted header
 - **Encapsulated keys**: X25519 ephemeral public key + ML-KEM ciphertext (base64)
 - **Encrypted payload**: Algorithm codes + salt encrypted with ChaCha20-Poly1305 (base64)

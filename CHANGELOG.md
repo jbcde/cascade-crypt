@@ -4,6 +4,19 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] - 2026-01-24
+
+### Changed
+- **BREAKING:** Header integrity hash now uses full 256-bit SHA-256 (was truncated to 128-bit)
+- Header format version bumped: plaintext v5→v7, encrypted v6→v8
+- Argon2 parameters now use named constants for clarity
+
+### Breaking Changes
+- **Files created with v0.3.x cannot be decrypted with v0.4.0** due to header hash length change. Decrypt with v0.3.x before upgrading, then re-encrypt.
+
+### Security
+- Full 256-bit header hash provides 2^128 collision resistance (birthday bound), up from 2^64
+
 ## [0.3.1] - 2026-01-24
 
 ### Changed
