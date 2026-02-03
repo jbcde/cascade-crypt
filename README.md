@@ -64,28 +64,30 @@ Suppresses all status output (algorithm chain, completion messages).
 
 ## Algorithms
 
-| Flag | Code | Algorithm | Block/Stream |
-|------|------|-----------|--------------|
-| `-A` | A | AES-256-GCM | Block (AEAD) |
-| `-T` | T | 3DES-CBC | Block |
-| `-W` | W | Twofish-256-CBC | Block |
-| `-S` | S | Serpent-256-CBC | Block |
-| `-C` | C | ChaCha20-Poly1305 | Stream (AEAD) |
-| `-X` | X | XChaCha20-Poly1305 | Stream (AEAD) |
-| `-M` | M | Camellia-256-CBC | Block |
-| `-B` | B | Blowfish-256-CBC | Block |
-| `-F` | F | CAST5-CBC | Block |
-| `-I` | I | IDEA-CBC | Block |
-| `-R` | R | ARIA-256-CBC | Block |
-| `-4` | 4 | SM4-CBC | Block |
-| `-K` | K | Kuznyechik-CBC | Block |
-| `-E` | E | SEED-CBC | Block |
-| `-3` | 3 | Threefish-256-CBC | Block |
-| `-6` | 6 | RC6-CBC | Block |
-| `-G` | G | Magma-CBC (GOST) | Block |
-| `-P` | P | Speck128/256-CBC | Block |
-| `-J` | J | GIFT-128-CBC | Block |
-| `-N` | N | Ascon-128 | Block (AEAD) |
+| Flag | Code | Algorithm | Block/Stream | Block Size |
+|------|------|-----------|--------------|------------|
+| `-T` | T | 3DES-CBC | Block | **64-bit** ⚠ |
+| `-A` | A | AES-256-GCM | Block (AEAD) | 128-bit |
+| `-R` | R | ARIA-256-CBC | Block | 128-bit |
+| `-N` | N | Ascon-128 | Block (AEAD) | 128-bit |
+| `-B` | B | Blowfish-256-CBC | Block | **64-bit** ⚠ |
+| `-M` | M | Camellia-256-CBC | Block | 128-bit |
+| `-F` | F | CAST5-CBC | Block | **64-bit** ⚠ |
+| `-C` | C | ChaCha20-Poly1305 | Stream (AEAD) | — |
+| `-J` | J | GIFT-128-CBC | Block | 128-bit |
+| `-I` | I | IDEA-CBC | Block | **64-bit** ⚠ |
+| `-K` | K | Kuznyechik-CBC | Block | 128-bit |
+| `-G` | G | Magma-CBC (GOST) | Block | **64-bit** ⚠ |
+| `-6` | 6 | RC6-CBC | Block | 128-bit |
+| `-E` | E | SEED-CBC | Block | 128-bit |
+| `-S` | S | Serpent-256-CBC | Block | 128-bit |
+| `-4` | 4 | SM4-CBC | Block | 128-bit |
+| `-P` | P | Speck128/256-CBC | Block | 128-bit |
+| `-3` | 3 | Threefish-256-CBC | Block | 256-bit |
+| `-W` | W | Twofish-256-CBC | Block | 128-bit |
+| `-X` | X | XChaCha20-Poly1305 | Stream (AEAD) | — |
+
+**⚠ 64-bit block ciphers** (3DES, Blowfish, CAST5, IDEA, Magma) are vulnerable to birthday attacks when encrypting large amounts of data. Collisions become likely after ~32GB with the same key. Avoid these for large files or use them only as inner layers in a cascade.
 
 ## Hybrid Header Protection
 
@@ -136,6 +138,23 @@ Without the private key, decryption fails:
 ```
 Error: Encrypted header requires private key
 ```
+
+### Puzzle Lock
+
+The `--lock` flag engages an optional puzzle lock on the encrypted output:
+
+```bash
+cascrypt -ASC --pubkey recipient.pubkey --lock -i secret.bin -o secret.enc
+```
+
+**Important:** The puzzle lock is **not encryption**. It provides no cryptographic security whatsoever. It is a puzzle—nothing more. The actual security comes entirely from the cipher cascade and the protected header.
+
+The puzzle lock:
+- Requires `--pubkey` (only available with protected headers)
+- Is **not encryption**—do not rely on it for security
+- Applies a reversible transformation to the output
+- Cannot be reversed without the matching private key
+- Is a puzzle for the curious
 
 ## File Format
 

@@ -217,9 +217,11 @@ cascrypt -n 30 --pubkey recipient.pub -i secret.bin -o secret.enc
 cascrypt -d --privkey my.keypair -i secret.enc -o secret.bin
 ```
 
-### Puzzle Lock Mode
+### Puzzle Lock
 
-Use `--lock` with `--pubkey` to apply an additional transformation to the encrypted payload. This adds another layer of protection that requires the private key to reverse:
+The `--lock` flag engages an optional puzzle lock on the encrypted output.
+
+**Important:** The puzzle lock is **not encryption**. It provides no cryptographic security. It is a puzzle—nothing more. The actual security comes entirely from the cipher cascade and (optionally) the protected header.
 
 ```bash
 # Encrypt with puzzle lock
@@ -231,9 +233,11 @@ cascrypt -d --privkey my.keypair -i secret.enc -o secret.bin -k "password"
 
 The puzzle lock:
 - Requires `--pubkey` (only works with protected headers)
-- Applies a deterministic transformation to the encrypted data
-- Cannot be decrypted without the matching private key
-- Adds no significant overhead
+- Is **not encryption** and provides no cryptographic security
+- Applies a reversible transformation to the encrypted output
+- Cannot be reversed without the matching private key
+- Adds negligible overhead
+- Is a puzzle for the curious
 
 ## Password/Key Input
 
@@ -283,31 +287,33 @@ cat secret.txt | cascrypt -A -i - -o - -k "pass" | base64
 
 ## Algorithm Reference
 
-| Flag | Code | Algorithm | Type | Key Size |
-|------|------|-----------|------|----------|
-| `-A` | A | AES-256-GCM | AEAD | 256-bit |
-| `-T` | T | 3DES-CBC | Block | 192-bit |
-| `-W` | W | Twofish-256-CBC | Block | 256-bit |
-| `-S` | S | Serpent-256-CBC | Block | 256-bit |
-| `-C` | C | ChaCha20-Poly1305 | AEAD | 256-bit |
-| `-X` | X | XChaCha20-Poly1305 | AEAD | 256-bit |
-| `-M` | M | Camellia-256-CBC | Block | 256-bit |
-| `-B` | B | Blowfish-256-CBC | Block | 256-bit |
-| `-F` | F | CAST5-CBC | Block | 128-bit |
-| `-I` | I | IDEA-CBC | Block | 128-bit |
-| `-R` | R | ARIA-256-CBC | Block | 256-bit |
-| `-4` | 4 | SM4-CBC | Block | 128-bit |
-| `-K` | K | Kuznyechik-CBC | Block | 256-bit |
-| `-E` | E | SEED-CBC | Block | 128-bit |
-| `-3` | 3 | Threefish-256-CBC | Block | 256-bit |
-| `-6` | 6 | RC6-CBC | Block | 128-bit |
-| `-G` | G | Magma-CBC (GOST) | Block | 256-bit |
-| `-P` | P | Speck128/256-CBC | Block | 256-bit |
-| `-J` | J | GIFT-128-CBC | Block | 128-bit |
-| `-N` | N | Ascon-128 | AEAD | 128-bit |
+| Flag | Code | Algorithm | Type | Key Size | Block Size |
+|------|------|-----------|------|----------|------------|
+| `-T` | T | 3DES-CBC | Block | 192-bit | **64-bit** ⚠ |
+| `-A` | A | AES-256-GCM | AEAD | 256-bit | 128-bit |
+| `-R` | R | ARIA-256-CBC | Block | 256-bit | 128-bit |
+| `-N` | N | Ascon-128 | AEAD | 128-bit | 128-bit |
+| `-B` | B | Blowfish-256-CBC | Block | 256-bit | **64-bit** ⚠ |
+| `-M` | M | Camellia-256-CBC | Block | 256-bit | 128-bit |
+| `-F` | F | CAST5-CBC | Block | 128-bit | **64-bit** ⚠ |
+| `-C` | C | ChaCha20-Poly1305 | AEAD | 256-bit | — |
+| `-J` | J | GIFT-128-CBC | Block | 128-bit | 128-bit |
+| `-I` | I | IDEA-CBC | Block | 128-bit | **64-bit** ⚠ |
+| `-K` | K | Kuznyechik-CBC | Block | 256-bit | 128-bit |
+| `-G` | G | Magma-CBC (GOST) | Block | 256-bit | **64-bit** ⚠ |
+| `-6` | 6 | RC6-CBC | Block | 128-bit | 128-bit |
+| `-E` | E | SEED-CBC | Block | 128-bit | 128-bit |
+| `-S` | S | Serpent-256-CBC | Block | 256-bit | 128-bit |
+| `-4` | 4 | SM4-CBC | Block | 128-bit | 128-bit |
+| `-P` | P | Speck128/256-CBC | Block | 256-bit | 128-bit |
+| `-3` | 3 | Threefish-256-CBC | Block | 256-bit | 256-bit |
+| `-W` | W | Twofish-256-CBC | Block | 256-bit | 128-bit |
+| `-X` | X | XChaCha20-Poly1305 | AEAD | 256-bit | — |
 
 **AEAD** = Authenticated Encryption with Associated Data (provides integrity)
 **Block** = CBC mode with PKCS7 padding
+
+**⚠ 64-bit block ciphers** (3DES, Blowfish, CAST5, IDEA, Magma) are vulnerable to birthday attacks when encrypting large amounts of data. Collisions become likely after ~32GB with the same key. Avoid these for large files or use them only as inner layers in a cascade.
 
 ## Examples
 

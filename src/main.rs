@@ -87,7 +87,7 @@ fn expand_combined_flags(args: Vec<String>) -> Vec<String> {
 }
 
 use cascrypt::{
-    decrypt_protected_with_buffer_mode, decrypt_with_buffer_mode,
+    buffer::detect_cow_filesystem, decrypt_protected_with_buffer_mode, decrypt_with_buffer_mode,
     encrypt_protected_with_buffer_mode, encrypt_with_buffer_mode, Algorithm, BufferMode,
     HybridKeypair, HybridPrivateKey, HybridPublicKey,
 };
@@ -580,6 +580,18 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
         Some(s) => s.parse::<BufferMode>().map_err(|e| anyhow::anyhow!(e))?,
         None => BufferMode::Auto,
     };
+
+    // Warn about CoW filesystems when disk buffering may be used
+    if !cli.silent && buffer_mode != BufferMode::Ram {
+        if let Some(fs_name) = detect_cow_filesystem() {
+            eprintln!(
+                "󰀦 Warning: Temp directory is on {} (copy-on-write filesystem).",
+                fs_name
+            );
+            eprintln!("   Secure deletion of temp files is not guaranteed.");
+            eprintln!("   Consider --buffer=ram for sensitive data, or use full-disk encryption.");
+        }
+    }
 
     // Read input
     let input_data = read_input(&input)?;
