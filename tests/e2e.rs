@@ -4,8 +4,8 @@
 
 use std::fs;
 use std::io::Write;
-use std::process::{Command, Stdio};
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Unique counter for temp file names to prevent race conditions
@@ -42,10 +42,12 @@ fn random_password() -> Vec<u8> {
     use std::hash::{BuildHasher, Hasher};
     let mut hasher = RandomState::new().build_hasher();
     hasher.write_usize(TEMP_FILE_COUNTER.fetch_add(1, Ordering::SeqCst) as usize);
-    hasher.write_u64(std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64);
+    hasher.write_u64(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64,
+    );
     let hash = hasher.finish();
     format!("{:016x}", hash).into_bytes()[..8].to_vec()
 }
@@ -77,7 +79,11 @@ fn run_cascade_ok(args: &[&str]) -> std::process::Output {
 /// Run cascade-crypt and expect failure
 fn run_cascade_fail(args: &[&str]) -> std::process::Output {
     let output = run_cascade(args);
-    assert!(!output.status.success(), "Expected command to fail: cascade-crypt {}", args.join(" "));
+    assert!(
+        !output.status.success(),
+        "Expected command to fail: cascade-crypt {}",
+        args.join(" ")
+    );
     output
 }
 
@@ -92,8 +98,26 @@ fn test_single_algorithm_aes() {
     let decrypted = create_temp_file("aes_decrypted.txt", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-A", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     let original = fs::read(&input).unwrap();
     let result = fs::read(&decrypted).unwrap();
@@ -109,8 +133,26 @@ fn test_single_algorithm_chacha() {
     let decrypted = create_temp_file("chacha_decrypted.txt", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-C", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-C",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -124,8 +166,26 @@ fn test_single_algorithm_serpent() {
     let decrypted = create_temp_file("serpent_decrypted.txt", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-S", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-S",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -143,8 +203,27 @@ fn test_two_algorithm_cascade() {
     let decrypted = create_temp_file("two_algo_decrypted.txt", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-A", "-S", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-S",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -158,8 +237,28 @@ fn test_three_algorithm_cascade() {
     let decrypted = create_temp_file("three_algo_decrypted.txt", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-A", "-S", "-C", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-S",
+        "-C",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -173,8 +272,30 @@ fn test_five_algorithm_cascade() {
     let decrypted = create_temp_file("five_algo_decrypted.txt", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-A", "-T", "-W", "-S", "-C", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-T",
+        "-W",
+        "-S",
+        "-C",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -189,11 +310,44 @@ fn test_all_twenty_algorithms() {
     let keyfile = create_keyfile();
 
     run_cascade_ok(&[
-        "-A", "-T", "-W", "-S", "-C", "-X", "-M", "-B", "-F", "-I",
-        "-R", "-4", "-K", "-E", "-3", "-6", "-G", "-P", "-J", "-N",
-        "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"
+        "-A",
+        "-T",
+        "-W",
+        "-S",
+        "-C",
+        "-X",
+        "-M",
+        "-B",
+        "-F",
+        "-I",
+        "-R",
+        "-4",
+        "-K",
+        "-E",
+        "-3",
+        "-6",
+        "-G",
+        "-P",
+        "-J",
+        "-N",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
     ]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -210,8 +364,27 @@ fn test_duplicate_algorithms_via_random() {
     let keyfile = create_keyfile();
 
     // With 50 random selections from 20 algorithms, duplicates are guaranteed
-    run_cascade_ok(&["-n", "50", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-n",
+        "50",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -229,8 +402,27 @@ fn test_random_single() {
     let decrypted = create_temp_file("random1_decrypted.txt", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-n", "1", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-n",
+        "1",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -244,8 +436,27 @@ fn test_random_five() {
     let decrypted = create_temp_file("random5_decrypted.txt", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-n", "5", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-n",
+        "5",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -259,8 +470,27 @@ fn test_random_twenty() {
     let decrypted = create_temp_file("random20_decrypted.txt", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-n", "20", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-n",
+        "20",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -281,13 +511,42 @@ fn test_protected_header_basic() {
     let keyfile = create_keyfile();
 
     // Generate keypair
-    run_cascade_ok(&["keygen", "-o", keypair.to_str().unwrap(), "--export-pubkey", pubkey.to_str().unwrap()]);
+    run_cascade_ok(&[
+        "keygen",
+        "-o",
+        keypair.to_str().unwrap(),
+        "--export-pubkey",
+        pubkey.to_str().unwrap(),
+    ]);
 
     // Encrypt with protected header
-    run_cascade_ok(&["-A", "-S", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "--pubkey", pubkey.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-S",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "--pubkey",
+        pubkey.to_str().unwrap(),
+        "-s",
+    ]);
 
     // Decrypt with private key
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "--privkey", keypair.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "--privkey",
+        keypair.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -304,13 +563,39 @@ fn test_protected_header_requires_privkey() {
     let keyfile = create_keyfile();
 
     // Generate keypair
-    run_cascade_ok(&["keygen", "-o", keypair.to_str().unwrap(), "--export-pubkey", pubkey.to_str().unwrap()]);
+    run_cascade_ok(&[
+        "keygen",
+        "-o",
+        keypair.to_str().unwrap(),
+        "--export-pubkey",
+        pubkey.to_str().unwrap(),
+    ]);
 
     // Encrypt with protected header
-    run_cascade_ok(&["-A", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "--pubkey", pubkey.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "--pubkey",
+        pubkey.to_str().unwrap(),
+        "-s",
+    ]);
 
     // Try to decrypt WITHOUT private key - should fail
-    run_cascade_fail(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_fail(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     cleanup(&[input, encrypted, decrypted, keypair, pubkey, keyfile]);
 }
@@ -326,16 +611,46 @@ fn test_protected_header_wrong_key() {
     let keyfile = create_keyfile();
 
     // Generate two different keypairs
-    run_cascade_ok(&["keygen", "-o", keypair1.to_str().unwrap(), "--export-pubkey", pubkey1.to_str().unwrap()]);
+    run_cascade_ok(&[
+        "keygen",
+        "-o",
+        keypair1.to_str().unwrap(),
+        "--export-pubkey",
+        pubkey1.to_str().unwrap(),
+    ]);
     run_cascade_ok(&["keygen", "-o", keypair2.to_str().unwrap()]);
 
     // Encrypt with keypair1's public key
-    run_cascade_ok(&["-A", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "--pubkey", pubkey1.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "--pubkey",
+        pubkey1.to_str().unwrap(),
+        "-s",
+    ]);
 
     // Try to decrypt with keypair2 - should fail
-    run_cascade_fail(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "--privkey", keypair2.to_str().unwrap(), "-s"]);
+    run_cascade_fail(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "--privkey",
+        keypair2.to_str().unwrap(),
+        "-s",
+    ]);
 
-    cleanup(&[input, encrypted, decrypted, keypair1, pubkey1, keypair2, keyfile]);
+    cleanup(&[
+        input, encrypted, decrypted, keypair1, pubkey1, keypair2, keyfile,
+    ]);
 }
 
 // ============================================================================
@@ -352,13 +667,43 @@ fn test_puzzle_lock() {
     let keyfile = create_keyfile();
 
     // Generate keypair
-    run_cascade_ok(&["keygen", "-o", keypair.to_str().unwrap(), "--export-pubkey", pubkey.to_str().unwrap()]);
+    run_cascade_ok(&[
+        "keygen",
+        "-o",
+        keypair.to_str().unwrap(),
+        "--export-pubkey",
+        pubkey.to_str().unwrap(),
+    ]);
 
     // Encrypt with puzzle lock
-    run_cascade_ok(&["-A", "-S", "--lock", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "--pubkey", pubkey.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-S",
+        "--lock",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "--pubkey",
+        pubkey.to_str().unwrap(),
+        "-s",
+    ]);
 
     // Decrypt with private key
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "--privkey", keypair.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "--privkey",
+        keypair.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -372,7 +717,17 @@ fn test_puzzle_lock_requires_pubkey() {
     let keyfile = create_keyfile();
 
     // Try to use --lock without --pubkey - should fail
-    run_cascade_fail(&["-A", "--lock", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_fail(&[
+        "-A",
+        "--lock",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     cleanup(&[input, encrypted, keyfile]);
 }
@@ -387,10 +742,28 @@ fn test_wrong_password() {
     let encrypted = create_temp_file("wrong_pw_encrypted.bin", b"");
     let decrypted = create_temp_file("wrong_pw_decrypted.txt", b"");
     let keyfile_correct = create_keyfile();
-    let keyfile_wrong = create_keyfile();  // Different random password
+    let keyfile_wrong = create_keyfile(); // Different random password
 
-    run_cascade_ok(&["-A", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile_correct.to_str().unwrap(), "-s"]);
-    run_cascade_fail(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile_wrong.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile_correct.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_fail(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile_wrong.to_str().unwrap(),
+        "-s",
+    ]);
 
     cleanup(&[input, encrypted, decrypted, keyfile_correct, keyfile_wrong]);
 }
@@ -402,7 +775,15 @@ fn test_no_algorithms_specified() {
     let keyfile = create_keyfile();
 
     // No algorithm flags - should fail
-    run_cascade_fail(&["-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_fail(&[
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     cleanup(&[input, encrypted, keyfile]);
 }
@@ -414,7 +795,17 @@ fn test_random_zero() {
     let keyfile = create_keyfile();
 
     // -n 0 should fail
-    run_cascade_fail(&["-n", "0", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_fail(&[
+        "-n",
+        "0",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     cleanup(&[input, encrypted, keyfile]);
 }
@@ -426,7 +817,18 @@ fn test_random_with_algorithm_flags() {
     let keyfile = create_keyfile();
 
     // -n with algorithm flags should fail
-    run_cascade_fail(&["-n", "5", "-A", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_fail(&[
+        "-n",
+        "5",
+        "-A",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     cleanup(&[input, encrypted, keyfile]);
 }
@@ -436,18 +838,39 @@ fn test_missing_input_file() {
     let encrypted = create_temp_file("missing_input_encrypted.bin", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_fail(&["-A", "-i", "/nonexistent/file.txt", "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_fail(&[
+        "-A",
+        "-i",
+        "/nonexistent/file.txt",
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     cleanup(&[encrypted, keyfile]);
 }
 
 #[test]
 fn test_corrupted_header() {
-    let encrypted = create_temp_file("corrupted_header.bin", b"[CCRYPT|1|INVALID|badhash]\ncorrupted data");
+    let encrypted = create_temp_file(
+        "corrupted_header.bin",
+        b"[CCRYPT|1|INVALID|badhash]\ncorrupted data",
+    );
     let decrypted = create_temp_file("corrupted_decrypted.txt", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_fail(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_fail(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     cleanup(&[encrypted, decrypted, keyfile]);
 }
@@ -465,8 +888,27 @@ fn test_binary_data() {
     let decrypted = create_temp_file("binary_decrypted.bin", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-A", "-S", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-S",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -476,14 +918,32 @@ fn test_binary_data() {
 #[test]
 fn test_large_binary_data() {
     // 1MB of random-ish data
-    let data: Vec<u8> = (0..1024*1024).map(|i| (i % 256) as u8).collect();
+    let data: Vec<u8> = (0..1024 * 1024).map(|i| (i % 256) as u8).collect();
     let input = create_temp_file("large_input.bin", &data);
     let encrypted = create_temp_file("large_encrypted.bin", b"");
     let decrypted = create_temp_file("large_decrypted.bin", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-A", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -497,8 +957,26 @@ fn test_empty_file() {
     let decrypted = create_temp_file("empty_decrypted.bin", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-A", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -518,7 +996,16 @@ fn test_stdin_input() {
 
     // Encrypt from stdin
     let mut child = Command::new(binary_path())
-        .args(&["-A", "-i", "-", "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"])
+        .args(&[
+            "-A",
+            "-i",
+            "-",
+            "-o",
+            encrypted.to_str().unwrap(),
+            "--keyfile",
+            keyfile.to_str().unwrap(),
+            "-s",
+        ])
         .stdin(Stdio::piped())
         .spawn()
         .expect("Failed to spawn process");
@@ -528,7 +1015,16 @@ fn test_stdin_input() {
     assert!(output.status.success(), "Encryption from stdin failed");
 
     // Decrypt normally
-    run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&decrypted).unwrap(), input_data);
 
@@ -546,8 +1042,14 @@ fn test_keygen_creates_valid_keypair() {
     run_cascade_ok(&["keygen", "-o", keypair.to_str().unwrap()]);
 
     let content = fs::read_to_string(&keypair).unwrap();
-    assert!(content.contains("x25519"), "Keypair should contain x25519 key");
-    assert!(content.contains("kyber"), "Keypair should contain kyber key");
+    assert!(
+        content.contains("x25519"),
+        "Keypair should contain x25519 key"
+    );
+    assert!(
+        content.contains("kyber"),
+        "Keypair should contain kyber key"
+    );
 
     cleanup(&[keypair]);
 }
@@ -557,18 +1059,36 @@ fn test_keygen_with_pubkey_export() {
     let keypair = create_temp_file("keygen_full.json", b"");
     let pubkey = create_temp_file("keygen_pub.json", b"");
 
-    run_cascade_ok(&["keygen", "-o", keypair.to_str().unwrap(), "--export-pubkey", pubkey.to_str().unwrap()]);
+    run_cascade_ok(&[
+        "keygen",
+        "-o",
+        keypair.to_str().unwrap(),
+        "--export-pubkey",
+        pubkey.to_str().unwrap(),
+    ]);
 
     let keypair_content = fs::read_to_string(&keypair).unwrap();
     let pubkey_content = fs::read_to_string(&pubkey).unwrap();
 
     // Keypair has both public and private
-    assert!(keypair_content.contains("\"public\""), "Keypair should have public key");
-    assert!(keypair_content.contains("\"private\""), "Keypair should have private key");
+    assert!(
+        keypair_content.contains("\"public\""),
+        "Keypair should have public key"
+    );
+    assert!(
+        keypair_content.contains("\"private\""),
+        "Keypair should have private key"
+    );
 
     // Public key file should only have public key data
-    assert!(pubkey_content.contains("x25519"), "Public key should contain x25519");
-    assert!(pubkey_content.contains("kyber"), "Public key should contain kyber");
+    assert!(
+        pubkey_content.contains("x25519"),
+        "Public key should contain x25519"
+    );
+    assert!(
+        pubkey_content.contains("kyber"),
+        "Public key should contain kyber"
+    );
 
     cleanup(&[keypair, pubkey]);
 }
@@ -582,10 +1102,19 @@ fn test_export_pubkey_command() {
     run_cascade_ok(&["keygen", "-o", keypair.to_str().unwrap()]);
 
     // Export public key separately
-    run_cascade_ok(&["export-pubkey", "-i", keypair.to_str().unwrap(), "-o", pubkey.to_str().unwrap()]);
+    run_cascade_ok(&[
+        "export-pubkey",
+        "-i",
+        keypair.to_str().unwrap(),
+        "-o",
+        pubkey.to_str().unwrap(),
+    ]);
 
     let pubkey_content = fs::read_to_string(&pubkey).unwrap();
-    assert!(pubkey_content.contains("x25519"), "Exported public key should contain x25519");
+    assert!(
+        pubkey_content.contains("x25519"),
+        "Exported public key should contain x25519"
+    );
 
     cleanup(&[keypair, pubkey]);
 }
@@ -597,23 +1126,64 @@ fn test_export_pubkey_command() {
 #[test]
 fn test_each_algorithm_individually() {
     let algos = [
-        ("-A", "aes"), ("-T", "3des"), ("-W", "twofish"), ("-S", "serpent"),
-        ("-C", "chacha"), ("-X", "xchacha"), ("-M", "camellia"), ("-B", "blowfish"),
-        ("-F", "cast5"), ("-I", "idea"), ("-R", "aria"), ("-4", "sm4"),
-        ("-K", "kuznyechik"), ("-E", "seed"), ("-3", "threefish"), ("-6", "rc6"),
-        ("-G", "magma"), ("-P", "speck"), ("-J", "gift"), ("-N", "ascon"),
+        ("-A", "aes"),
+        ("-T", "3des"),
+        ("-W", "twofish"),
+        ("-S", "serpent"),
+        ("-C", "chacha"),
+        ("-X", "xchacha"),
+        ("-M", "camellia"),
+        ("-B", "blowfish"),
+        ("-F", "cast5"),
+        ("-I", "idea"),
+        ("-R", "aria"),
+        ("-4", "sm4"),
+        ("-K", "kuznyechik"),
+        ("-E", "seed"),
+        ("-3", "threefish"),
+        ("-6", "rc6"),
+        ("-G", "magma"),
+        ("-P", "speck"),
+        ("-J", "gift"),
+        ("-N", "ascon"),
     ];
 
     for (flag, name) in algos {
-        let input = create_temp_file(&format!("{}_input.txt", name), format!("Testing {}", name).as_bytes());
+        let input = create_temp_file(
+            &format!("{}_input.txt", name),
+            format!("Testing {}", name).as_bytes(),
+        );
         let encrypted = create_temp_file(&format!("{}_encrypted.bin", name), b"");
         let decrypted = create_temp_file(&format!("{}_decrypted.txt", name), b"");
         let keyfile = create_keyfile();
 
-        run_cascade_ok(&[flag, "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-        run_cascade_ok(&["-d", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+        run_cascade_ok(&[
+            flag,
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            encrypted.to_str().unwrap(),
+            "--keyfile",
+            keyfile.to_str().unwrap(),
+            "-s",
+        ]);
+        run_cascade_ok(&[
+            "-d",
+            "-i",
+            encrypted.to_str().unwrap(),
+            "-o",
+            decrypted.to_str().unwrap(),
+            "--keyfile",
+            keyfile.to_str().unwrap(),
+            "-s",
+        ]);
 
-        assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap(), "Algorithm {} failed roundtrip", name);
+        assert_eq!(
+            fs::read(&input).unwrap(),
+            fs::read(&decrypted).unwrap(),
+            "Algorithm {} failed roundtrip",
+            name
+        );
 
         cleanup(&[input, encrypted, decrypted, keyfile]);
     }
@@ -630,11 +1200,33 @@ fn test_different_encryptions_produce_different_output() {
     let encrypted2 = create_temp_file("determinism_encrypted2.bin", b"");
     let keyfile = create_keyfile();
 
-    run_cascade_ok(&["-A", "-i", input.to_str().unwrap(), "-o", encrypted1.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
-    run_cascade_ok(&["-A", "-i", input.to_str().unwrap(), "-o", encrypted2.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted1.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+    run_cascade_ok(&[
+        "-A",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted2.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     // Due to random nonces/IVs, encryptions should differ
-    assert_ne!(fs::read(&encrypted1).unwrap(), fs::read(&encrypted2).unwrap(), "Encryptions should be non-deterministic");
+    assert_ne!(
+        fs::read(&encrypted1).unwrap(),
+        fs::read(&encrypted2).unwrap(),
+        "Encryptions should be non-deterministic"
+    );
 
     cleanup(&[input, encrypted1, encrypted2, keyfile]);
 }
@@ -651,8 +1243,27 @@ fn test_progress_flag_works() {
     let keyfile = create_keyfile();
 
     // Run with --progress flag
-    run_cascade_ok(&["-A", "-S", "--progress", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap()]);
-    run_cascade_ok(&["-d", "--progress", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap()]);
+    run_cascade_ok(&[
+        "-A",
+        "-S",
+        "--progress",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+    ]);
+    run_cascade_ok(&[
+        "-d",
+        "--progress",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -671,10 +1282,33 @@ fn test_buffer_mode_ram() {
     let keyfile = create_keyfile();
 
     // Encrypt with RAM buffer mode
-    run_cascade_ok(&["-A", "-S", "--buffer", "ram", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-S",
+        "--buffer",
+        "ram",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     // Decrypt with RAM buffer mode
-    run_cascade_ok(&["-d", "--buffer", "ram", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-d",
+        "--buffer",
+        "ram",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -689,10 +1323,33 @@ fn test_buffer_mode_disk() {
     let keyfile = create_keyfile();
 
     // Encrypt with disk buffer mode
-    run_cascade_ok(&["-A", "-S", "--buffer", "disk", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-S",
+        "--buffer",
+        "disk",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     // Decrypt with disk buffer mode
-    run_cascade_ok(&["-d", "--buffer", "disk", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-d",
+        "--buffer",
+        "disk",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -707,10 +1364,33 @@ fn test_buffer_mode_auto() {
     let keyfile = create_keyfile();
 
     // Encrypt with auto buffer mode (explicit)
-    run_cascade_ok(&["-A", "-S", "--buffer", "auto", "-i", input.to_str().unwrap(), "-o", encrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-S",
+        "--buffer",
+        "auto",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     // Decrypt with auto buffer mode (explicit)
-    run_cascade_ok(&["-d", "--buffer", "auto", "-i", encrypted.to_str().unwrap(), "-o", decrypted.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-d",
+        "--buffer",
+        "auto",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     assert_eq!(fs::read(&input).unwrap(), fs::read(&decrypted).unwrap());
 
@@ -720,7 +1400,10 @@ fn test_buffer_mode_auto() {
 #[test]
 fn test_buffer_modes_produce_identical_decryption() {
     // Encrypt with RAM mode, verify decryption works with any mode
-    let input = create_temp_file("buffer_compat_input.txt", b"Cross-buffer mode compatibility test");
+    let input = create_temp_file(
+        "buffer_compat_input.txt",
+        b"Cross-buffer mode compatibility test",
+    );
     let encrypted_ram = create_temp_file("buffer_compat_enc_ram.bin", b"");
     let encrypted_disk = create_temp_file("buffer_compat_enc_disk.bin", b"");
     let decrypted_ram = create_temp_file("buffer_compat_dec_ram.txt", b"");
@@ -729,27 +1412,104 @@ fn test_buffer_modes_produce_identical_decryption() {
     let keyfile = create_keyfile();
 
     // Encrypt with RAM mode
-    run_cascade_ok(&["-A", "-W", "--buffer", "ram", "-i", input.to_str().unwrap(), "-o", encrypted_ram.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-W",
+        "--buffer",
+        "ram",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted_ram.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     // Encrypt with disk mode
-    run_cascade_ok(&["-A", "-W", "--buffer", "disk", "-i", input.to_str().unwrap(), "-o", encrypted_disk.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-A",
+        "-W",
+        "--buffer",
+        "disk",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted_disk.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     // Decrypt RAM-encrypted with RAM mode
-    run_cascade_ok(&["-d", "--buffer", "ram", "-i", encrypted_ram.to_str().unwrap(), "-o", decrypted_ram.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-d",
+        "--buffer",
+        "ram",
+        "-i",
+        encrypted_ram.to_str().unwrap(),
+        "-o",
+        decrypted_ram.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     // Decrypt disk-encrypted with disk mode
-    run_cascade_ok(&["-d", "--buffer", "disk", "-i", encrypted_disk.to_str().unwrap(), "-o", decrypted_disk.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-d",
+        "--buffer",
+        "disk",
+        "-i",
+        encrypted_disk.to_str().unwrap(),
+        "-o",
+        decrypted_disk.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     // Cross-mode: decrypt RAM-encrypted with disk mode
-    run_cascade_ok(&["-d", "--buffer", "disk", "-i", encrypted_ram.to_str().unwrap(), "-o", decrypted_cross.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    run_cascade_ok(&[
+        "-d",
+        "--buffer",
+        "disk",
+        "-i",
+        encrypted_ram.to_str().unwrap(),
+        "-o",
+        decrypted_cross.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
 
     // All decryptions should produce identical original content
     let original = fs::read(&input).unwrap();
-    assert_eq!(original, fs::read(&decrypted_ram).unwrap(), "RAM decrypt failed");
-    assert_eq!(original, fs::read(&decrypted_disk).unwrap(), "Disk decrypt failed");
-    assert_eq!(original, fs::read(&decrypted_cross).unwrap(), "Cross-mode decrypt failed");
+    assert_eq!(
+        original,
+        fs::read(&decrypted_ram).unwrap(),
+        "RAM decrypt failed"
+    );
+    assert_eq!(
+        original,
+        fs::read(&decrypted_disk).unwrap(),
+        "Disk decrypt failed"
+    );
+    assert_eq!(
+        original,
+        fs::read(&decrypted_cross).unwrap(),
+        "Cross-mode decrypt failed"
+    );
 
-    cleanup(&[input, encrypted_ram, encrypted_disk, decrypted_ram, decrypted_disk, decrypted_cross, keyfile]);
+    cleanup(&[
+        input,
+        encrypted_ram,
+        encrypted_disk,
+        decrypted_ram,
+        decrypted_disk,
+        decrypted_cross,
+        keyfile,
+    ]);
 }
 
 #[test]
@@ -759,7 +1519,18 @@ fn test_buffer_mode_invalid() {
     let keyfile = create_keyfile();
 
     // Try invalid buffer mode
-    let result = run_cascade(&["-A", "--buffer", "invalid", "-i", input.to_str().unwrap(), "-o", output.to_str().unwrap(), "--keyfile", keyfile.to_str().unwrap(), "-s"]);
+    let result = run_cascade(&[
+        "-A",
+        "--buffer",
+        "invalid",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        output.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
     assert!(!result.status.success(), "Invalid buffer mode should fail");
 
     cleanup(&[input, output, keyfile]);

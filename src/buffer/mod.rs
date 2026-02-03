@@ -39,7 +39,10 @@ impl std::str::FromStr for BufferMode {
             "ram" => Ok(BufferMode::Ram),
             "disk" => Ok(BufferMode::Disk),
             "auto" => Ok(BufferMode::Auto),
-            _ => Err(format!("Invalid buffer mode: '{}'. Use 'ram', 'disk', or 'auto'", s)),
+            _ => Err(format!(
+                "Invalid buffer mode: '{}'. Use 'ram', 'disk', or 'auto'",
+                s
+            )),
         }
     }
 }
@@ -60,7 +63,9 @@ impl std::fmt::Display for BufferMode {
 pub fn should_switch_to_disk(current_size: usize) -> bool {
     // Estimate memory needed for next operation:
     // current buffer + 5% expansion headroom + 64 bytes overhead
-    let estimated = current_size.saturating_add(current_size / 20).saturating_add(64);
+    let estimated = current_size
+        .saturating_add(current_size / 20)
+        .saturating_add(64);
 
     // Primary check: try to allocate the estimated size
     if !can_allocate(estimated) {
@@ -149,7 +154,11 @@ impl LayerBuffer {
     pub fn len(&self) -> io::Result<usize> {
         match self {
             LayerBuffer::Ram(data) => Ok(data.len()),
-            LayerBuffer::Disk { file_a, file_b, current_is_a } => {
+            LayerBuffer::Disk {
+                file_a,
+                file_b,
+                current_is_a,
+            } => {
                 let file = if *current_is_a { file_a } else { file_b };
                 file.len().map(|l| l as usize)
             }
@@ -165,7 +174,11 @@ impl LayerBuffer {
     pub fn read(&mut self) -> io::Result<Zeroizing<Vec<u8>>> {
         match self {
             LayerBuffer::Ram(data) => Ok(data.clone()),
-            LayerBuffer::Disk { file_a, file_b, current_is_a } => {
+            LayerBuffer::Disk {
+                file_a,
+                file_b,
+                current_is_a,
+            } => {
                 let file = if *current_is_a { file_a } else { file_b };
                 Ok(Zeroizing::new(file.read_all()?))
             }
@@ -185,11 +198,15 @@ impl LayerBuffer {
     {
         match self {
             LayerBuffer::Ram(data) => {
-                let result = f(&data).map_err(ProcessError::Crypto)?;
+                let result = f(data).map_err(ProcessError::Crypto)?;
                 *data = Zeroizing::new(result);
                 Ok(())
             }
-            LayerBuffer::Disk { file_a, file_b, current_is_a } => {
+            LayerBuffer::Disk {
+                file_a,
+                file_b,
+                current_is_a,
+            } => {
                 // Read from current file
                 let (current, next) = if *current_is_a {
                     (file_a as &mut SecureTempFile, file_b as &mut SecureTempFile)
@@ -215,7 +232,11 @@ impl LayerBuffer {
     pub fn finalize(self) -> io::Result<Vec<u8>> {
         match self {
             LayerBuffer::Ram(data) => Ok(data.to_vec()),
-            LayerBuffer::Disk { mut file_a, mut file_b, current_is_a } => {
+            LayerBuffer::Disk {
+                mut file_a,
+                mut file_b,
+                current_is_a,
+            } => {
                 let result = if current_is_a {
                     file_a.read_all()?
                 } else {
@@ -297,9 +318,11 @@ mod tests {
         let data = b"hello";
         let mut buffer = LayerBuffer::new_ram(data.to_vec());
 
-        buffer.process(|d| -> Result<Vec<u8>, io::Error> {
-            Ok(d.iter().map(|b| b.wrapping_add(1)).collect())
-        }).unwrap();
+        buffer
+            .process(|d| -> Result<Vec<u8>, io::Error> {
+                Ok(d.iter().map(|b| b.wrapping_add(1)).collect())
+            })
+            .unwrap();
 
         let result = buffer.read().unwrap();
         assert_eq!(result.as_slice(), b"ifmmp");
@@ -310,9 +333,11 @@ mod tests {
         let data = b"hello";
         let mut buffer = LayerBuffer::switch_to_disk(Zeroizing::new(data.to_vec())).unwrap();
 
-        buffer.process(|d| -> Result<Vec<u8>, io::Error> {
-            Ok(d.iter().map(|b| b.wrapping_add(1)).collect())
-        }).unwrap();
+        buffer
+            .process(|d| -> Result<Vec<u8>, io::Error> {
+                Ok(d.iter().map(|b| b.wrapping_add(1)).collect())
+            })
+            .unwrap();
 
         let result = buffer.read().unwrap();
         assert_eq!(result.as_slice(), b"ifmmp");
@@ -325,9 +350,11 @@ mod tests {
 
         // Process multiple times to test ping-pong
         for i in 0..5 {
-            buffer.process(|d| -> Result<Vec<u8>, io::Error> {
-                Ok(d.iter().map(|b| b.wrapping_add(1)).collect())
-            }).unwrap();
+            buffer
+                .process(|d| -> Result<Vec<u8>, io::Error> {
+                    Ok(d.iter().map(|b| b.wrapping_add(1)).collect())
+                })
+                .unwrap();
 
             let expected: Vec<u8> = data.iter().map(|b| b.wrapping_add((i + 1) as u8)).collect();
             let result = buffer.read().unwrap();

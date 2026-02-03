@@ -99,12 +99,26 @@ impl Algorithm {
     #[must_use]
     pub const fn key_size(&self) -> usize {
         match self {
-            Self::Aes256 | Self::Twofish | Self::Serpent | Self::ChaCha20Poly1305 |
-            Self::XChaCha20Poly1305 | Self::Camellia | Self::Blowfish | Self::Aria |
-            Self::Kuznyechik | Self::Threefish256 | Self::Magma | Self::Speck128_256 => 32,
+            Self::Aes256
+            | Self::Twofish
+            | Self::Serpent
+            | Self::ChaCha20Poly1305
+            | Self::XChaCha20Poly1305
+            | Self::Camellia
+            | Self::Blowfish
+            | Self::Aria
+            | Self::Kuznyechik
+            | Self::Threefish256
+            | Self::Magma
+            | Self::Speck128_256 => 32,
             Self::TripleDes => 24,
-            Self::Cast5 | Self::Idea | Self::Sm4 | Self::Seed |
-            Self::Rc6 | Self::Gift128 | Self::Ascon128 => 16,
+            Self::Cast5
+            | Self::Idea
+            | Self::Sm4
+            | Self::Seed
+            | Self::Rc6
+            | Self::Gift128
+            | Self::Ascon128 => 16,
         }
     }
 
@@ -172,7 +186,10 @@ macro_rules! cbc_impl {
 
         fn enc(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
             if key.len() != $key_len {
-                return Err(CryptoError::InvalidKeyLength { expected: $key_len, got: key.len() });
+                return Err(CryptoError::InvalidKeyLength {
+                    expected: $key_len,
+                    got: key.len(),
+                });
             }
             let mut iv = [0u8; $iv_size];
             rand::thread_rng().fill_bytes(&mut iv);
@@ -184,7 +201,8 @@ macro_rules! cbc_impl {
             buffer[..plaintext.len()].copy_from_slice(plaintext);
             let len = buffer.len();
 
-            cipher.encrypt_padded_mut::<block_padding::NoPadding>(&mut buffer, len)
+            cipher
+                .encrypt_padded_mut::<block_padding::NoPadding>(&mut buffer, len)
                 .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
 
             let mut result = Vec::with_capacity($iv_size + buffer.len());
@@ -195,7 +213,10 @@ macro_rules! cbc_impl {
 
         fn dec(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
             if key.len() != $key_len {
-                return Err(CryptoError::InvalidKeyLength { expected: $key_len, got: key.len() });
+                return Err(CryptoError::InvalidKeyLength {
+                    expected: $key_len,
+                    got: key.len(),
+                });
             }
             if ciphertext.len() < $iv_size {
                 return Err(CryptoError::InvalidNonce);
@@ -205,10 +226,14 @@ macro_rules! cbc_impl {
                 .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
 
             let mut buffer = data.to_vec();
-            cipher.decrypt_padded_mut::<block_padding::NoPadding>(&mut buffer)
+            cipher
+                .decrypt_padded_mut::<block_padding::NoPadding>(&mut buffer)
                 .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
 
-            let padding_len = *buffer.last().ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))? as usize;
+            let padding_len = *buffer
+                .last()
+                .ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))?
+                as usize;
             if padding_len == 0 || padding_len > $block_size || padding_len > buffer.len() {
                 return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
             }
@@ -232,17 +257,21 @@ macro_rules! cbc_impl {
 // Macro for AEAD ciphers
 macro_rules! aead_impl {
     ($cipher:ty, $nonce_size:expr) => {{
-        use aes_gcm::aead::{Aead, KeyInit, generic_array::GenericArray};
+        use aes_gcm::aead::{generic_array::GenericArray, Aead, KeyInit};
 
         fn enc(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
             if key.len() != 32 {
-                return Err(CryptoError::InvalidKeyLength { expected: 32, got: key.len() });
+                return Err(CryptoError::InvalidKeyLength {
+                    expected: 32,
+                    got: key.len(),
+                });
             }
             let cipher = <$cipher>::new_from_slice(key)
                 .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
             let mut nonce = [0u8; $nonce_size];
             rand::thread_rng().fill_bytes(&mut nonce);
-            let ct = cipher.encrypt(GenericArray::from_slice(&nonce), plaintext)
+            let ct = cipher
+                .encrypt(GenericArray::from_slice(&nonce), plaintext)
                 .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
             let mut result = Vec::with_capacity($nonce_size + ct.len());
             result.extend_from_slice(&nonce);
@@ -252,7 +281,10 @@ macro_rules! aead_impl {
 
         fn dec(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
             if key.len() != 32 {
-                return Err(CryptoError::InvalidKeyLength { expected: 32, got: key.len() });
+                return Err(CryptoError::InvalidKeyLength {
+                    expected: 32,
+                    got: key.len(),
+                });
             }
             if ciphertext.len() < $nonce_size {
                 return Err(CryptoError::InvalidNonce);
@@ -260,7 +292,8 @@ macro_rules! aead_impl {
             let cipher = <$cipher>::new_from_slice(key)
                 .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
             let (nonce, data) = ciphertext.split_at($nonce_size);
-            cipher.decrypt(GenericArray::from_slice(nonce), data)
+            cipher
+                .decrypt(GenericArray::from_slice(nonce), data)
                 .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))
         }
 
@@ -271,11 +304,17 @@ macro_rules! aead_impl {
 // Macro for cipher 0.5 block ciphers with manual CBC mode
 macro_rules! cipher05_cbc_impl {
     ($cipher:ty, $key_len:expr, $block_size:expr) => {{
-        use magma::cipher::{KeyInit, BlockCipherEncrypt, BlockCipherDecrypt};
+        use magma::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit};
 
         fn enc(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-            if key.len() != $key_len { return Err(CryptoError::InvalidKeyLength { expected: $key_len, got: key.len() }); }
-            let cipher = <$cipher>::new_from_slice(key).map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
+            if key.len() != $key_len {
+                return Err(CryptoError::InvalidKeyLength {
+                    expected: $key_len,
+                    got: key.len(),
+                });
+            }
+            let cipher = <$cipher>::new_from_slice(key)
+                .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
             let mut iv = [0u8; $block_size];
             rand::thread_rng().fill_bytes(&mut iv);
             let padding_len = $block_size - (plaintext.len() % $block_size);
@@ -283,7 +322,9 @@ macro_rules! cipher05_cbc_impl {
             buffer[..plaintext.len()].copy_from_slice(plaintext);
             let mut prev = iv;
             for chunk in buffer.chunks_mut($block_size) {
-                for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
+                for (i, b) in chunk.iter_mut().enumerate() {
+                    *b ^= prev[i];
+                }
                 let mut block = (*<&[u8; $block_size]>::try_from(&chunk[..]).unwrap()).into();
                 cipher.encrypt_block(&mut block);
                 chunk.copy_from_slice(&block);
@@ -296,13 +337,23 @@ macro_rules! cipher05_cbc_impl {
         }
 
         fn dec(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-            if key.len() != $key_len { return Err(CryptoError::InvalidKeyLength { expected: $key_len, got: key.len() }); }
-            if ciphertext.len() < $block_size { return Err(CryptoError::InvalidNonce); }
-            let cipher = <$cipher>::new_from_slice(key).map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
+            if key.len() != $key_len {
+                return Err(CryptoError::InvalidKeyLength {
+                    expected: $key_len,
+                    got: key.len(),
+                });
+            }
+            if ciphertext.len() < $block_size {
+                return Err(CryptoError::InvalidNonce);
+            }
+            let cipher = <$cipher>::new_from_slice(key)
+                .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
             let (iv, data) = ciphertext.split_at($block_size);
             // Validate ciphertext length is non-empty and multiple of block size
             if data.is_empty() || data.len() % $block_size != 0 {
-                return Err(CryptoError::DecryptionFailed("Invalid ciphertext length".into()));
+                return Err(CryptoError::DecryptionFailed(
+                    "Invalid ciphertext length".into(),
+                ));
             }
             let mut buffer = data.to_vec();
             let mut prev = [0u8; $block_size];
@@ -313,10 +364,15 @@ macro_rules! cipher05_cbc_impl {
                 let mut block = (*<&[u8; $block_size]>::try_from(&chunk[..]).unwrap()).into();
                 cipher.decrypt_block(&mut block);
                 chunk.copy_from_slice(&block);
-                for (i, b) in chunk.iter_mut().enumerate() { *b ^= prev[i]; }
+                for (i, b) in chunk.iter_mut().enumerate() {
+                    *b ^= prev[i];
+                }
                 prev = ct_backup;
             }
-            let padding_len = *buffer.last().ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))? as usize;
+            let padding_len = *buffer
+                .last()
+                .ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))?
+                as usize;
             if padding_len == 0 || padding_len > $block_size || padding_len > buffer.len() {
                 return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
             }
@@ -338,15 +394,22 @@ macro_rules! cipher05_cbc_impl {
 }
 
 fn ascon_encrypt(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-    use ascon_aead::{AsconAead128, aead::{Aead, KeyInit}};
+    use ascon_aead::{
+        aead::{Aead, KeyInit},
+        AsconAead128,
+    };
     const KEY_LEN: usize = 16;
     const NONCE_SIZE: usize = 16;
-    let key_arr: [u8; KEY_LEN] = key.try_into()
-        .map_err(|_| CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() })?;
+    let key_arr: [u8; KEY_LEN] = key.try_into().map_err(|_| CryptoError::InvalidKeyLength {
+        expected: KEY_LEN,
+        got: key.len(),
+    })?;
     let cipher = AsconAead128::new(&key_arr.into());
     let mut nonce = [0u8; NONCE_SIZE];
     rand::thread_rng().fill_bytes(&mut nonce);
-    let ct = cipher.encrypt(&nonce.into(), plaintext).map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
+    let ct = cipher
+        .encrypt(&nonce.into(), plaintext)
+        .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
     let mut result = Vec::with_capacity(NONCE_SIZE + ct.len());
     result.extend_from_slice(&nonce);
     result.extend(ct);
@@ -354,19 +417,26 @@ fn ascon_encrypt(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
 }
 
 fn ascon_decrypt(key: &[u8], ciphertext: &[u8]) -> Result<Vec<u8>, CryptoError> {
-    use ascon_aead::{AsconAead128, aead::{Aead, KeyInit}};
+    use ascon_aead::{
+        aead::{Aead, KeyInit},
+        AsconAead128,
+    };
     const KEY_LEN: usize = 16;
     const NONCE_SIZE: usize = 16;
-    if ciphertext.len() < NONCE_SIZE { return Err(CryptoError::InvalidNonce); }
-    let key_arr: [u8; KEY_LEN] = key.try_into()
-        .map_err(|_| CryptoError::InvalidKeyLength { expected: KEY_LEN, got: key.len() })?;
+    if ciphertext.len() < NONCE_SIZE {
+        return Err(CryptoError::InvalidNonce);
+    }
+    let key_arr: [u8; KEY_LEN] = key.try_into().map_err(|_| CryptoError::InvalidKeyLength {
+        expected: KEY_LEN,
+        got: key.len(),
+    })?;
     let cipher = AsconAead128::new(&key_arr.into());
     let (nonce, data) = ciphertext.split_at(NONCE_SIZE);
-    let nonce_arr: [u8; NONCE_SIZE] = nonce.try_into()
-        .map_err(|_| CryptoError::InvalidNonce)?;
-    cipher.decrypt(&nonce_arr.into(), data).map_err(|e| CryptoError::DecryptionFailed(e.to_string()))
+    let nonce_arr: [u8; NONCE_SIZE] = nonce.try_into().map_err(|_| CryptoError::InvalidNonce)?;
+    cipher
+        .decrypt(&nonce_arr.into(), data)
+        .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))
 }
-
 
 #[must_use = "encrypted data must be used"]
 pub fn encrypt(algo: Algorithm, key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
@@ -417,26 +487,86 @@ mod tests {
         assert_eq!(plaintext.as_slice(), decrypted.as_slice());
     }
 
-    #[test] fn test_aes256() { test_roundtrip(Algorithm::Aes256); }
-    #[test] fn test_tripledes() { test_roundtrip(Algorithm::TripleDes); }
-    #[test] fn test_twofish() { test_roundtrip(Algorithm::Twofish); }
-    #[test] fn test_serpent() { test_roundtrip(Algorithm::Serpent); }
-    #[test] fn test_chacha20() { test_roundtrip(Algorithm::ChaCha20Poly1305); }
-    #[test] fn test_xchacha20() { test_roundtrip(Algorithm::XChaCha20Poly1305); }
-    #[test] fn test_camellia() { test_roundtrip(Algorithm::Camellia); }
-    #[test] fn test_blowfish() { test_roundtrip(Algorithm::Blowfish); }
-    #[test] fn test_cast5() { test_roundtrip(Algorithm::Cast5); }
-    #[test] fn test_idea() { test_roundtrip(Algorithm::Idea); }
-    #[test] fn test_aria() { test_roundtrip(Algorithm::Aria); }
-    #[test] fn test_sm4() { test_roundtrip(Algorithm::Sm4); }
-    #[test] fn test_kuznyechik() { test_roundtrip(Algorithm::Kuznyechik); }
-    #[test] fn test_seed() { test_roundtrip(Algorithm::Seed); }
-    #[test] fn test_threefish256() { test_roundtrip(Algorithm::Threefish256); }
-    #[test] fn test_rc6() { test_roundtrip(Algorithm::Rc6); }
-    #[test] fn test_magma() { test_roundtrip(Algorithm::Magma); }
-    #[test] fn test_speck128_256() { test_roundtrip(Algorithm::Speck128_256); }
-    #[test] fn test_gift128() { test_roundtrip(Algorithm::Gift128); }
-    #[test] fn test_ascon128() { test_roundtrip(Algorithm::Ascon128); }
+    #[test]
+    fn test_aes256() {
+        test_roundtrip(Algorithm::Aes256);
+    }
+    #[test]
+    fn test_tripledes() {
+        test_roundtrip(Algorithm::TripleDes);
+    }
+    #[test]
+    fn test_twofish() {
+        test_roundtrip(Algorithm::Twofish);
+    }
+    #[test]
+    fn test_serpent() {
+        test_roundtrip(Algorithm::Serpent);
+    }
+    #[test]
+    fn test_chacha20() {
+        test_roundtrip(Algorithm::ChaCha20Poly1305);
+    }
+    #[test]
+    fn test_xchacha20() {
+        test_roundtrip(Algorithm::XChaCha20Poly1305);
+    }
+    #[test]
+    fn test_camellia() {
+        test_roundtrip(Algorithm::Camellia);
+    }
+    #[test]
+    fn test_blowfish() {
+        test_roundtrip(Algorithm::Blowfish);
+    }
+    #[test]
+    fn test_cast5() {
+        test_roundtrip(Algorithm::Cast5);
+    }
+    #[test]
+    fn test_idea() {
+        test_roundtrip(Algorithm::Idea);
+    }
+    #[test]
+    fn test_aria() {
+        test_roundtrip(Algorithm::Aria);
+    }
+    #[test]
+    fn test_sm4() {
+        test_roundtrip(Algorithm::Sm4);
+    }
+    #[test]
+    fn test_kuznyechik() {
+        test_roundtrip(Algorithm::Kuznyechik);
+    }
+    #[test]
+    fn test_seed() {
+        test_roundtrip(Algorithm::Seed);
+    }
+    #[test]
+    fn test_threefish256() {
+        test_roundtrip(Algorithm::Threefish256);
+    }
+    #[test]
+    fn test_rc6() {
+        test_roundtrip(Algorithm::Rc6);
+    }
+    #[test]
+    fn test_magma() {
+        test_roundtrip(Algorithm::Magma);
+    }
+    #[test]
+    fn test_speck128_256() {
+        test_roundtrip(Algorithm::Speck128_256);
+    }
+    #[test]
+    fn test_gift128() {
+        test_roundtrip(Algorithm::Gift128);
+    }
+    #[test]
+    fn test_ascon128() {
+        test_roundtrip(Algorithm::Ascon128);
+    }
 
     #[test]
     fn test_different_nonces() {
@@ -465,7 +595,11 @@ mod tests {
             // Truncate to leave partial block (IV + partial data)
             let truncated = &encrypted[..encrypted.len() - 3];
             let result = decrypt(algo, &key, truncated);
-            assert!(result.is_err(), "{:?} should error on truncated ciphertext", algo);
+            assert!(
+                result.is_err(),
+                "{:?} should error on truncated ciphertext",
+                algo
+            );
         }
     }
 }

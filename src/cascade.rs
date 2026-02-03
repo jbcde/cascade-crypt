@@ -12,19 +12,34 @@ use crate::hybrid::{HybridPrivateKey, HybridPublicKey};
 
 mod _t {
     const _C: [u8; 4] = [0x9E, 0x84, 0xBE, 0xA4];
-    const fn _u(i: usize) -> u8 { _C[i] ^ 0xDF }
-    const fn _w() -> u8 { _u(1).wrapping_sub(_u(0)) }
-    const fn _r() -> u8 { _w() >> 1 }
-    #[inline(never)] fn _g(b: u8, lo: u8) -> u8 {
+    const fn _u(i: usize) -> u8 {
+        _C[i] ^ 0xDF
+    }
+    const fn _w() -> u8 {
+        _u(1).wrapping_sub(_u(0))
+    }
+    const fn _r() -> u8 {
+        _w() >> 1
+    }
+    #[inline(never)]
+    fn _g(b: u8, lo: u8) -> u8 {
         let d = b.wrapping_sub(lo);
-        if d >= _w() { return b; }
+        if d >= _w() {
+            return b;
+        }
         lo.wrapping_add((d.wrapping_add(_r())) % _w())
     }
     fn _f(b: u8) -> u8 {
         let t = _g(b, _u(0));
-        if t != b { t } else { _g(b, _u(2)) }
+        if t != b {
+            t
+        } else {
+            _g(b, _u(2))
+        }
     }
-    pub fn _x(d: &[u8]) -> Vec<u8> { d.iter().map(|&b| _f(b)).collect() }
+    pub fn _x(d: &[u8]) -> Vec<u8> {
+        d.iter().map(|&b| _f(b)).collect()
+    }
 }
 
 #[derive(Error, Debug)]
@@ -54,7 +69,13 @@ impl From<ProcessError<CryptoError>> for CascadeError {
     }
 }
 
-fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm, layer: usize, params: &Argon2Params) -> Result<Zeroizing<Vec<u8>>, CascadeError> {
+fn derive_key(
+    password: &[u8],
+    salt: &[u8],
+    algo: Algorithm,
+    layer: usize,
+    params: &Argon2Params,
+) -> Result<Zeroizing<Vec<u8>>, CascadeError> {
     let argon2 = Argon2::new(
         argon2::Algorithm::Argon2id,
         argon2::Version::V0x13,
@@ -136,47 +157,130 @@ where
 }
 
 #[must_use = "encrypted data must be used"]
-pub fn encrypt(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>) -> Result<Vec<u8>, CascadeError> {
+pub fn encrypt(
+    data: &[u8],
+    password: &[u8],
+    algorithms: Vec<Algorithm>,
+) -> Result<Vec<u8>, CascadeError> {
     encrypt_with_progress(data, password, algorithms, |_, _| {})
 }
 
 #[must_use = "encrypted data must be used"]
-pub fn encrypt_with_progress<F>(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, progress: F) -> Result<Vec<u8>, CascadeError>
-where F: FnMut(usize, usize) {
+pub fn encrypt_with_progress<F>(
+    data: &[u8],
+    password: &[u8],
+    algorithms: Vec<Algorithm>,
+    progress: F,
+) -> Result<Vec<u8>, CascadeError>
+where
+    F: FnMut(usize, usize),
+{
     encrypt_with_buffer_mode(data, password, algorithms, BufferMode::Auto, progress)
 }
 
 #[must_use = "encrypted data must be used"]
-pub fn encrypt_with_buffer_mode<F>(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, buffer_mode: BufferMode, progress: F) -> Result<Vec<u8>, CascadeError>
-where F: FnMut(usize, usize) {
-    if algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
+pub fn encrypt_with_buffer_mode<F>(
+    data: &[u8],
+    password: &[u8],
+    algorithms: Vec<Algorithm>,
+    buffer_mode: BufferMode,
+    progress: F,
+) -> Result<Vec<u8>, CascadeError>
+where
+    F: FnMut(usize, usize),
+{
+    if algorithms.is_empty() {
+        return Err(CascadeError::NoAlgorithms);
+    }
     let mut salt = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut salt);
-    let encrypted = encrypt_layers(data, password, &algorithms, &salt, false, buffer_mode, progress)?;
-    let mut result = Header::with_ciphertext(algorithms, salt, false, &encrypted).serialize().into_bytes();
+    let encrypted = encrypt_layers(
+        data,
+        password,
+        &algorithms,
+        &salt,
+        false,
+        buffer_mode,
+        progress,
+    )?;
+    let mut result = Header::with_ciphertext(algorithms, salt, false, &encrypted)
+        .serialize()
+        .into_bytes();
     result.extend(encrypted);
     Ok(result)
 }
 
 #[must_use = "encrypted data must be used"]
-pub fn encrypt_protected(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, recipient_public: &HybridPublicKey, locked: bool) -> Result<Vec<u8>, CascadeError> {
-    encrypt_protected_with_progress(data, password, algorithms, recipient_public, locked, |_, _| {})
+pub fn encrypt_protected(
+    data: &[u8],
+    password: &[u8],
+    algorithms: Vec<Algorithm>,
+    recipient_public: &HybridPublicKey,
+    locked: bool,
+) -> Result<Vec<u8>, CascadeError> {
+    encrypt_protected_with_progress(
+        data,
+        password,
+        algorithms,
+        recipient_public,
+        locked,
+        |_, _| {},
+    )
 }
 
 #[must_use = "encrypted data must be used"]
-pub fn encrypt_protected_with_progress<F>(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, recipient_public: &HybridPublicKey, locked: bool, progress: F) -> Result<Vec<u8>, CascadeError>
-where F: FnMut(usize, usize) {
-    encrypt_protected_with_buffer_mode(data, password, algorithms, recipient_public, locked, BufferMode::Auto, progress)
+pub fn encrypt_protected_with_progress<F>(
+    data: &[u8],
+    password: &[u8],
+    algorithms: Vec<Algorithm>,
+    recipient_public: &HybridPublicKey,
+    locked: bool,
+    progress: F,
+) -> Result<Vec<u8>, CascadeError>
+where
+    F: FnMut(usize, usize),
+{
+    encrypt_protected_with_buffer_mode(
+        data,
+        password,
+        algorithms,
+        recipient_public,
+        locked,
+        BufferMode::Auto,
+        progress,
+    )
 }
 
 #[must_use = "encrypted data must be used"]
-pub fn encrypt_protected_with_buffer_mode<F>(data: &[u8], password: &[u8], algorithms: Vec<Algorithm>, recipient_public: &HybridPublicKey, locked: bool, buffer_mode: BufferMode, progress: F) -> Result<Vec<u8>, CascadeError>
-where F: FnMut(usize, usize) {
-    if algorithms.is_empty() { return Err(CascadeError::NoAlgorithms); }
+pub fn encrypt_protected_with_buffer_mode<F>(
+    data: &[u8],
+    password: &[u8],
+    algorithms: Vec<Algorithm>,
+    recipient_public: &HybridPublicKey,
+    locked: bool,
+    buffer_mode: BufferMode,
+    progress: F,
+) -> Result<Vec<u8>, CascadeError>
+where
+    F: FnMut(usize, usize),
+{
+    if algorithms.is_empty() {
+        return Err(CascadeError::NoAlgorithms);
+    }
     let mut salt = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut salt);
-    let encrypted = encrypt_layers(data, password, &algorithms, &salt, locked, buffer_mode, progress)?;
-    let mut result = Header::with_ciphertext(algorithms, salt, locked, &encrypted).serialize_encrypted(recipient_public)?.into_bytes();
+    let encrypted = encrypt_layers(
+        data,
+        password,
+        &algorithms,
+        &salt,
+        locked,
+        buffer_mode,
+        progress,
+    )?;
+    let mut result = Header::with_ciphertext(algorithms, salt, locked, &encrypted)
+        .serialize_encrypted(recipient_public)?
+        .into_bytes();
     result.extend(encrypted);
     Ok(result)
 }
@@ -187,34 +291,68 @@ pub fn decrypt(data: &[u8], password: &[u8]) -> Result<Vec<u8>, CascadeError> {
 }
 
 #[must_use = "decrypted data must be used"]
-pub fn decrypt_with_progress<F>(data: &[u8], password: &[u8], progress: F) -> Result<Vec<u8>, CascadeError>
-where F: FnMut(usize, usize) {
+pub fn decrypt_with_progress<F>(
+    data: &[u8],
+    password: &[u8],
+    progress: F,
+) -> Result<Vec<u8>, CascadeError>
+where
+    F: FnMut(usize, usize),
+{
     decrypt_with_buffer_mode(data, password, BufferMode::Auto, progress)
 }
 
 #[must_use = "decrypted data must be used"]
-pub fn decrypt_with_buffer_mode<F>(data: &[u8], password: &[u8], buffer_mode: BufferMode, progress: F) -> Result<Vec<u8>, CascadeError>
-where F: FnMut(usize, usize) {
-    if Header::is_encrypted(data) { return Err(CascadeError::PrivateKeyRequired); }
+pub fn decrypt_with_buffer_mode<F>(
+    data: &[u8],
+    password: &[u8],
+    buffer_mode: BufferMode,
+    progress: F,
+) -> Result<Vec<u8>, CascadeError>
+where
+    F: FnMut(usize, usize),
+{
+    if Header::is_encrypted(data) {
+        return Err(CascadeError::PrivateKeyRequired);
+    }
     let (header, encrypted_data) = Header::parse(data)?;
     header.verify_ciphertext(encrypted_data)?;
     decrypt_layers(&header, encrypted_data, password, buffer_mode, progress)
 }
 
 #[must_use = "decrypted data must be used"]
-pub fn decrypt_protected(data: &[u8], password: &[u8], private_key: &HybridPrivateKey) -> Result<Vec<u8>, CascadeError> {
+pub fn decrypt_protected(
+    data: &[u8],
+    password: &[u8],
+    private_key: &HybridPrivateKey,
+) -> Result<Vec<u8>, CascadeError> {
     decrypt_protected_with_progress(data, password, private_key, |_, _| {})
 }
 
 #[must_use = "decrypted data must be used"]
-pub fn decrypt_protected_with_progress<F>(data: &[u8], password: &[u8], private_key: &HybridPrivateKey, progress: F) -> Result<Vec<u8>, CascadeError>
-where F: FnMut(usize, usize) {
+pub fn decrypt_protected_with_progress<F>(
+    data: &[u8],
+    password: &[u8],
+    private_key: &HybridPrivateKey,
+    progress: F,
+) -> Result<Vec<u8>, CascadeError>
+where
+    F: FnMut(usize, usize),
+{
     decrypt_protected_with_buffer_mode(data, password, private_key, BufferMode::Auto, progress)
 }
 
 #[must_use = "decrypted data must be used"]
-pub fn decrypt_protected_with_buffer_mode<F>(data: &[u8], password: &[u8], private_key: &HybridPrivateKey, buffer_mode: BufferMode, progress: F) -> Result<Vec<u8>, CascadeError>
-where F: FnMut(usize, usize) {
+pub fn decrypt_protected_with_buffer_mode<F>(
+    data: &[u8],
+    password: &[u8],
+    private_key: &HybridPrivateKey,
+    buffer_mode: BufferMode,
+    progress: F,
+) -> Result<Vec<u8>, CascadeError>
+where
+    F: FnMut(usize, usize),
+{
     let (header, encrypted_data) = if Header::is_encrypted(data) {
         Header::parse_encrypted(data, private_key)?
     } else {
@@ -238,7 +376,12 @@ where
         return Err(CascadeError::NoAlgorithms);
     }
     let total = header.algorithms.len();
-    let keys = derive_keys_parallel(password, &header.salt, &header.algorithms, &header.argon2_params)?;
+    let keys = derive_keys_parallel(
+        password,
+        &header.salt,
+        &header.algorithms,
+        &header.argon2_params,
+    )?;
 
     // Initialize buffer based on mode
     let mut buffer = match buffer_mode {
@@ -276,12 +419,16 @@ where
     // Wrong password produces garbage that fails UTF-8/base64 validation.
     let decoded_str = String::from_utf8(decrypted.to_vec())
         .map(Zeroizing::new)
-        .map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed(
-            "Decryption failed - wrong password or corrupted data".into()
-        )))?;
-    encoder::decode(&decoded_str).map_err(|_| CascadeError::Crypto(CryptoError::DecryptionFailed(
-        "Decryption failed - wrong password or corrupted data".into()
-    )))
+        .map_err(|_| {
+            CascadeError::Crypto(CryptoError::DecryptionFailed(
+                "Decryption failed - wrong password or corrupted data".into(),
+            ))
+        })?;
+    encoder::decode(&decoded_str).map_err(|_| {
+        CascadeError::Crypto(CryptoError::DecryptionFailed(
+            "Decryption failed - wrong password or corrupted data".into(),
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -321,7 +468,8 @@ mod tests {
     fn test_binary_data() {
         let data: Vec<u8> = (0..=255).collect();
         let password = b"binary-test";
-        let encrypted = encrypt(&data, password, vec![Algorithm::Serpent, Algorithm::Aes256]).unwrap();
+        let encrypted =
+            encrypt(&data, password, vec![Algorithm::Serpent, Algorithm::Aes256]).unwrap();
         let decrypted = decrypt(&encrypted, password).unwrap();
         assert_eq!(data, decrypted);
     }
@@ -357,8 +505,18 @@ mod tests {
     fn test_protected_requires_private_key() {
         let data = b"Secret data";
         let keypair = HybridKeypair::generate();
-        let encrypted = encrypt_protected(data, b"pass", vec![Algorithm::Aes256], &keypair.public, false).unwrap();
-        assert!(matches!(decrypt(&encrypted, b"pass"), Err(CascadeError::PrivateKeyRequired)));
+        let encrypted = encrypt_protected(
+            data,
+            b"pass",
+            vec![Algorithm::Aes256],
+            &keypair.public,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(
+            decrypt(&encrypted, b"pass"),
+            Err(CascadeError::PrivateKeyRequired)
+        ));
     }
 
     #[test]
@@ -367,7 +525,14 @@ mod tests {
         let password = b"test-password";
         let keypair = HybridKeypair::generate();
 
-        let encrypted = encrypt_protected(data, password, vec![Algorithm::Aes256], &keypair.public, true).unwrap();
+        let encrypted = encrypt_protected(
+            data,
+            password,
+            vec![Algorithm::Aes256],
+            &keypair.public,
+            true,
+        )
+        .unwrap();
         assert!(Header::is_encrypted(&encrypted));
         let decrypted = decrypt_protected(&encrypted, password, &keypair.private).unwrap();
         assert_eq!(data.as_slice(), decrypted.as_slice());
@@ -375,8 +540,8 @@ mod tests {
 
     #[test]
     fn test_seal_involution() {
-        let a: &[u8] = &[0x48,0x65,0x6c,0x6c,0x6f];
-        let b: &[u8] = &[0x55,0x72,0x79,0x79,0x62];
+        let a: &[u8] = &[0x48, 0x65, 0x6c, 0x6c, 0x6f];
+        let b: &[u8] = &[0x55, 0x72, 0x79, 0x79, 0x62];
         assert_eq!(_t::_x(a), b);
         assert_eq!(_t::_x(b), a);
         assert_eq!(_t::_x(&_t::_x(a)), a);
@@ -400,7 +565,14 @@ mod tests {
         let data = b"Secret data";
         let password = b"test-password";
         let keypair = HybridKeypair::generate();
-        let mut encrypted = encrypt_protected(data, password, vec![Algorithm::Aes256], &keypair.public, false).unwrap();
+        let mut encrypted = encrypt_protected(
+            data,
+            password,
+            vec![Algorithm::Aes256],
+            &keypair.public,
+            false,
+        )
+        .unwrap();
         // Tamper with ciphertext (last byte)
         let len = encrypted.len();
         encrypted[len - 1] ^= 0xFF;
@@ -419,7 +591,8 @@ mod tests {
             data,
             password,
             vec![Algorithm::Aes256, Algorithm::Aes256, Algorithm::Aes256],
-        ).unwrap();
+        )
+        .unwrap();
         let decrypted = decrypt(&encrypted, password).unwrap();
         assert_eq!(data.as_slice(), decrypted.as_slice());
     }
