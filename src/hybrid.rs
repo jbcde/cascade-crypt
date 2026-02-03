@@ -6,6 +6,8 @@
 //!
 //! Both shared secrets are combined via HKDF to derive a symmetric key.
 
+use std::mem::MaybeUninit;
+
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
     ChaCha20Poly1305, Nonce,
@@ -111,10 +113,10 @@ fn derive_symmetric_key(
 
     // Use HKDF to derive final key
     let hk = Hkdf::<Sha256>::new(Some(b"cascrypt-hybrid"), &combined);
-    let mut key = Zeroizing::new([0u8; 32]);
-    hk.expand(b"header-encryption", key.as_mut())
+    let mut key_buf = MaybeUninit::<[u8; 32]>::uninit();
+    hk.expand(b"header-encryption", unsafe { &mut *key_buf.as_mut_ptr() })
         .map_err(|_| HybridError::KeyGeneration)?;
-    Ok(key)
+    Ok(Zeroizing::new(unsafe { key_buf.assume_init() }))
 }
 
 /// Encrypt data using hybrid X25519 + ML-KEM-1024
@@ -139,8 +141,11 @@ pub fn encrypt(
     let symmetric_key = derive_symmetric_key(x25519_shared.as_bytes(), kyber_shared.as_bytes())?;
 
     // Generate nonce
-    let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    let nonce_bytes = {
+        let mut buf = MaybeUninit::<[u8; 12]>::uninit();
+        rand::thread_rng().fill_bytes(unsafe { &mut *buf.as_mut_ptr() });
+        unsafe { buf.assume_init() }
+    };
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     // Encrypt plaintext with ChaCha20-Poly1305

@@ -1,3 +1,5 @@
+use std::mem::MaybeUninit;
+
 use argon2::Argon2;
 use rand::RngCore;
 use rayon::prelude::*;
@@ -192,8 +194,11 @@ where
     if algorithms.is_empty() {
         return Err(CascadeError::NoAlgorithms);
     }
-    let mut salt = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut salt);
+    let salt = {
+        let mut buf = MaybeUninit::<[u8; 32]>::uninit();
+        rand::thread_rng().fill_bytes(unsafe { &mut *buf.as_mut_ptr() });
+        unsafe { buf.assume_init() }
+    };
     let encrypted = encrypt_layers(
         data,
         password,
@@ -267,8 +272,11 @@ where
     if algorithms.is_empty() {
         return Err(CascadeError::NoAlgorithms);
     }
-    let mut salt = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut salt);
+    let salt = {
+        let mut buf = MaybeUninit::<[u8; 32]>::uninit();
+        rand::thread_rng().fill_bytes(unsafe { &mut *buf.as_mut_ptr() });
+        unsafe { buf.assume_init() }
+    };
     let encrypted = encrypt_layers(
         data,
         password,
