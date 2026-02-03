@@ -393,17 +393,18 @@ mod tests {
     use super::*;
     use crate::hybrid::HybridKeypair;
     use rand::RngCore;
+    use std::mem::MaybeUninit;
 
     fn random_salt() -> [u8; 32] {
-        let mut salt = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut salt);
-        salt
+        let mut salt = MaybeUninit::<[u8; 32]>::uninit();
+        let slice = unsafe { &mut *salt.as_mut_ptr() };
+        rand::thread_rng().fill_bytes(slice);
+        unsafe { salt.assume_init() }
     }
 
     #[test]
     fn test_header_roundtrip() {
-        let mut salt = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut salt);
+        let salt = random_salt();
         let ciphertext = b"encrypted data here";
         let header = Header::with_ciphertext(
             vec![
@@ -428,8 +429,7 @@ mod tests {
 
     #[test]
     fn test_encrypted_header_roundtrip() {
-        let mut salt = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut salt);
+        let salt = random_salt();
         let ciphertext = b"encrypted data here";
         let header = Header::with_ciphertext(
             vec![Algorithm::Aes256, Algorithm::ChaCha20Poly1305],
@@ -454,8 +454,7 @@ mod tests {
 
     #[test]
     fn test_encrypted_header_with_seal() {
-        let mut salt = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut salt);
+        let salt = random_salt();
         let ciphertext = b"sealed data";
         let header = Header::with_ciphertext(vec![Algorithm::Aes256], salt, true, ciphertext);
         let keypair = HybridKeypair::generate();

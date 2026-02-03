@@ -436,11 +436,13 @@ mod tests {
     use super::*;
     use crate::hybrid::HybridKeypair;
     use rand::RngCore;
+    use std::mem::MaybeUninit;
 
     fn random_password() -> Vec<u8> {
-        let mut bytes = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut bytes);
-        bytes.to_vec()
+        let mut bytes = MaybeUninit::<[u8; 16]>::uninit();
+        let slice = unsafe { &mut *bytes.as_mut_ptr() };
+        rand::thread_rng().fill_bytes(slice);
+        unsafe { bytes.assume_init() }.to_vec()
     }
 
     #[test]
