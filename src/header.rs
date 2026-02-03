@@ -1,6 +1,7 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 
 use crate::crypto::Algorithm;
@@ -18,10 +19,10 @@ pub struct Argon2Params {
     pub p_cost: u32,  // Parallelism
 }
 
-// Argon2id defaults (match argon2 crate defaults)
-const ARGON2_M_COST: u32 = 19456;  // ~19 MiB memory
-const ARGON2_T_COST: u32 = 2;      // 2 iterations
-const ARGON2_P_COST: u32 = 1;      // 1 parallel lane
+// Argon2id defaults (stronger than argon2 crate defaults, per OWASP 2024)
+const ARGON2_M_COST: u32 = 65536;  // 64 MiB memory
+const ARGON2_T_COST: u32 = 3;      // 3 iterations
+const ARGON2_P_COST: u32 = 4;      // 4 parallel lanes
 
 impl Default for Argon2Params {
     fn default() -> Self {
@@ -105,7 +106,7 @@ impl Header {
         format!("{},{},{}", self.argon2_params.m_cost, self.argon2_params.t_cost, self.argon2_params.p_cost)
     }
 
-    fn compute_hash(&self) -> String {
+    fn compute_hash_bytes(&self) -> [u8; 32] {
         let mut h = Sha256::new();
         h.update(self.algo_codes().as_bytes());
         h.update(self.salt);
@@ -113,7 +114,11 @@ impl Header {
         if let Some(ct_hash) = &self.ciphertext_hash {
             h.update(ct_hash);
         }
-        hex::encode(&h.finalize())
+        h.finalize().into()
+    }
+
+    fn compute_hash(&self) -> String {
+        hex::encode(&self.compute_hash_bytes())
     }
 
     #[must_use]
@@ -162,7 +167,9 @@ impl Header {
                 let argon2_params = parse_argon2(parts[4])?;
                 let ciphertext_hash = parse_hash(parts[5])?;
                 let header = Self { algorithms, salt, locked: false, ciphertext_hash: Some(ciphertext_hash), argon2_params };
-                if parts[6] != header.compute_hash() {
+                let provided_hash = hex::decode(parts[6]).map_err(|_| HeaderError::InvalidFormat)?;
+                let expected_hash = header.compute_hash_bytes();
+                if provided_hash.len() != 32 || provided_hash.as_slice().ct_eq(&expected_hash).unwrap_u8() != 1 {
                     return Err(HeaderError::HashMismatch);
                 }
                 Ok((header, remaining))
@@ -180,7 +187,7 @@ impl Header {
     pub fn verify_ciphertext(&self, ciphertext: &[u8]) -> Result<(), HeaderError> {
         let expected = self.ciphertext_hash.ok_or(HeaderError::MissingCiphertextHash)?;
         let actual: [u8; 32] = Sha256::digest(ciphertext).into();
-        if actual != expected {
+        if actual.ct_eq(&expected).unwrap_u8() != 1 {
             return Err(HeaderError::CiphertextHashMismatch);
         }
         Ok(())
@@ -194,12 +201,14 @@ impl Header {
         let version: u8 = parts[1].parse().map_err(|_| HeaderError::InvalidFormat)?;
         if version != VERSION_ENCRYPTED { return Err(HeaderError::UnsupportedVersion(version)); }
 
-        // Verify header hash
+        // Verify header hash (constant-time comparison)
         let mut h = Sha256::new();
         h.update(parts[3]);
         h.update(parts[4]);
         h.update(parts[5]);
-        if parts[6] != hex::encode(&h.finalize()) {
+        let expected_hash: [u8; 32] = h.finalize().into();
+        let provided_hash = hex::decode(parts[6]).map_err(|_| HeaderError::InvalidFormat)?;
+        if provided_hash.len() != 32 || provided_hash.as_slice().ct_eq(&expected_hash).unwrap_u8() != 1 {
             return Err(HeaderError::HashMismatch);
         }
 

@@ -4,6 +4,7 @@ pub mod crypto;
 pub mod encoder;
 pub mod header;
 pub mod hybrid;
+pub mod memlock;
 
 pub use buffer::BufferMode;
 pub use cascade::{

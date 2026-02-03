@@ -70,6 +70,11 @@ fn derive_key(password: &[u8], salt: &[u8], algo: Algorithm, layer: usize, param
     argon2
         .hash_password_into(password, &full_salt, &mut key)
         .map_err(|_| CascadeError::KeyDerivation)?;
+
+    // Attempt to lock key in memory (prevent swapping to disk)
+    // Failure is non-fatal - mlock may require elevated privileges
+    crate::memlock::mlock(key.as_ptr(), key.len());
+
     Ok(key)
 }
 

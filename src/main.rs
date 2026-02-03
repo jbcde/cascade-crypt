@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 fn init_thread_pool() {
     let cores = std::thread::available_parallelism()
@@ -128,7 +128,7 @@ struct Cli {
     #[arg(long = "progress")]
     progress: bool,
 
-    /// Engage puzzle lock (requires --pubkey)
+    /// Engage puzzle lock - obfuscation layer, NOT cryptographic security (requires --pubkey)
     #[arg(long = "lock")]
     lock: bool,
 
@@ -232,10 +232,6 @@ struct Cli {
     /// Output file (use '-' for stdout)
     #[arg(short = 'o', long = "output")]
     output: Option<PathBuf>,
-
-    /// Encryption key/passphrase (prompts if not provided)
-    #[arg(short = 'k', long = "key")]
-    key: Option<String>,
 
     /// Read key from file
     #[arg(long = "keyfile")]
@@ -341,6 +337,13 @@ fn is_aead(algo: Algorithm) -> bool {
         Algorithm::XChaCha20Poly1305 | Algorithm::Ascon128)
 }
 
+/// Check if an algorithm uses a 64-bit block size (vulnerable to birthday attacks)
+fn is_64bit_block(algo: Algorithm) -> bool {
+    matches!(algo,
+        Algorithm::TripleDes | Algorithm::Blowfish | Algorithm::Cast5 |
+        Algorithm::Idea | Algorithm::Magma)
+}
+
 /// Check if any individual algorithm flags were specified
 fn has_algorithm_flags(cli: &Cli) -> bool {
     cli.aes > 0 || cli.triple_des > 0 || cli.twofish > 0 || cli.serpent > 0
@@ -350,20 +353,14 @@ fn has_algorithm_flags(cli: &Cli) -> bool {
         || cli.gift > 0 || cli.ascon > 0
 }
 
-fn get_password(cli: &mut Cli) -> Result<Zeroizing<Vec<u8>>> {
-    // Priority: keyfile > key argument > interactive prompt
+fn get_password(cli: &Cli) -> Result<Zeroizing<Vec<u8>>> {
+    // Priority: keyfile > interactive prompt
     if let Some(keyfile) = &cli.keyfile {
         let key = fs::read(keyfile).context("Failed to read keyfile")?;
         return Ok(Zeroizing::new(key));
     }
 
-    if let Some(mut key) = cli.key.take() {
-        let bytes = key.as_bytes().to_vec();
-        key.zeroize();
-        return Ok(Zeroizing::new(bytes));
-    }
-
-    // Interactive prompt
+    // Interactive prompt (no echo)
     let prompt = if cli.decrypt {
         "Enter decryption password: "
     } else {
@@ -507,7 +504,7 @@ fn cmd_list_algorithms() {
     println!("Repeat flags for multiple layers: -AAA or -A -A -A");
 }
 
-fn cmd_encrypt_decrypt(mut cli: Cli) -> Result<()> {
+fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
     // Handle --list before requiring input/output
     if cli.list {
         cmd_list_algorithms();
@@ -534,7 +531,7 @@ fn cmd_encrypt_decrypt(mut cli: Cli) -> Result<()> {
     let input_data = read_input(&input)?;
 
     // Get password
-    let password = get_password(&mut cli)?;
+    let password = get_password(&cli)?;
 
     let show_progress = cli.progress && !cli.silent;
 
@@ -604,6 +601,14 @@ fn cmd_encrypt_decrypt(mut cli: Cli) -> Result<()> {
                 if !is_aead(*last) {
                     eprintln!("󰀦 Warning: Outer layer ({}) is not AEAD - consider ending with -A, -C, -X, or -N for authentication", last.name());
                 }
+            }
+            // Warn about 64-bit block ciphers (birthday attack vulnerability)
+            let weak_ciphers: Vec<_> = algorithms.iter().filter(|a| is_64bit_block(**a)).collect();
+            if !weak_ciphers.is_empty() {
+                let names: Vec<_> = weak_ciphers.iter().map(|a| a.name()).collect();
+                eprintln!("󰀦 Warning: 64-bit block cipher{} ({}) - vulnerable to birthday attacks on large files (>32GB)",
+                    if weak_ciphers.len() > 1 { "s" } else { "" },
+                    names.join(", "));
             }
         }
 
