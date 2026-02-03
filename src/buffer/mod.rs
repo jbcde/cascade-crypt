@@ -5,7 +5,7 @@ mod secure_temp;
 use std::io;
 use zeroize::Zeroizing;
 
-pub use secure_temp::SecureTempFile;
+pub use secure_temp::{detect_cow_filesystem, SecureTempFile};
 
 /// Error type for LayerBuffer::process operations.
 ///

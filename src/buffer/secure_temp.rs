@@ -5,6 +5,50 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use tempfile::Builder;
 
+/// Known copy-on-write filesystem magic numbers (Linux).
+#[cfg(target_os = "linux")]
+mod cow_filesystems {
+    pub const BTRFS_MAGIC: i64 = 0x9123683E;
+    pub const ZFS_MAGIC: i64 = 0x2FC12FC1;
+    pub const BCACHEFS_MAGIC: i64 = 0xCA451A4E_u32 as i64;
+    pub const NILFS_MAGIC: i64 = 0x3434;
+}
+
+/// Check if the system temp directory is on a copy-on-write filesystem.
+///
+/// Returns Some(filesystem_name) if a CoW filesystem is detected, None otherwise.
+/// On non-Linux systems, always returns None.
+#[cfg(target_os = "linux")]
+pub fn detect_cow_filesystem() -> Option<&'static str> {
+    use cow_filesystems::*;
+    use std::ffi::CString;
+    use std::mem::MaybeUninit;
+
+    let temp_dir = std::env::temp_dir();
+    let path = CString::new(temp_dir.to_string_lossy().as_bytes()).ok()?;
+
+    let mut stat = MaybeUninit::<libc::statfs>::uninit();
+    let result = unsafe { libc::statfs(path.as_ptr(), stat.as_mut_ptr()) };
+
+    if result != 0 {
+        return None;
+    }
+
+    let stat = unsafe { stat.assume_init() };
+    match stat.f_type {
+        BTRFS_MAGIC => Some("btrfs"),
+        ZFS_MAGIC => Some("ZFS"),
+        BCACHEFS_MAGIC => Some("bcachefs"),
+        NILFS_MAGIC => Some("NILFS2"),
+        _ => None,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn detect_cow_filesystem() -> Option<&'static str> {
+    None
+}
+
 /// A temporary file that securely overwrites its contents before deletion.
 pub struct SecureTempFile {
     /// Path to the temp file. None if already deleted.
@@ -113,6 +157,8 @@ impl Drop for SecureTempFile {
         // Best-effort secure cleanup on drop (e.g., during panic)
         if self.path.is_some() {
             let _ = self.secure_overwrite();
+            // Ensure overwrites hit disk before unlinking
+            let _ = self.file.sync_all();
             if let Some(path) = self.path.take() {
                 let _ = std::fs::remove_file(&path);
             }
@@ -194,5 +240,20 @@ mod tests {
             filename.starts_with('.'),
             "Temp file should be hidden (start with .)"
         );
+    }
+
+    #[test]
+    fn test_detect_cow_filesystem_runs() {
+        // Just verify the function runs without panicking.
+        // Result depends on the actual filesystem, so we don't assert a specific value.
+        let result = super::detect_cow_filesystem();
+        // If detected, it should be a known filesystem name
+        if let Some(name) = result {
+            assert!(
+                ["btrfs", "ZFS", "bcachefs", "NILFS2"].contains(&name),
+                "Unknown CoW filesystem: {}",
+                name
+            );
+        }
     }
 }

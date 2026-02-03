@@ -4,6 +4,21 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.2] - 2026-02-03
+
+### Added
+- Copy-on-write filesystem detection: warns when temp directory is on btrfs, ZFS, bcachefs, or NILFS2 (secure deletion not guaranteed on CoW filesystems)
+- Documented puzzle lock feature in README and USAGE (clarified it is not encryption)
+- Block size column in algorithm tables showing 64-bit vs 128-bit block sizes
+
+### Fixed
+- `SecureTempFile` Drop impl now calls `fsync()` before unlinking to ensure overwrites hit disk
+
+### Documentation
+- Algorithm tables in README and USAGE now sorted alphabetically
+- 64-bit block ciphers (3DES, Blowfish, CAST5, IDEA, Magma) clearly marked with warning in tables
+- Added explanation of birthday attack vulnerability for 64-bit block ciphers
+
 ## [0.4.1] - 2026-02-02
 
 ### Changed
