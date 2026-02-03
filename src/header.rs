@@ -394,6 +394,12 @@ mod tests {
     use crate::hybrid::HybridKeypair;
     use rand::RngCore;
 
+    fn random_salt() -> [u8; 32] {
+        let mut salt = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut salt);
+        salt
+    }
+
     #[test]
     fn test_header_roundtrip() {
         let mut salt = [0u8; 32];
@@ -466,7 +472,7 @@ mod tests {
     fn test_algo_codes() {
         let header = Header::with_ciphertext(
             vec![Algorithm::Aes256, Algorithm::Serpent, Algorithm::Twofish],
-            [0u8; 32],
+            random_salt(),
             false,
             b"dummy",
         );
@@ -476,7 +482,7 @@ mod tests {
     #[test]
     fn test_hash_mismatch_detection() {
         let ciphertext = b"test data";
-        let header = Header::with_ciphertext(vec![Algorithm::Aes256], [0u8; 32], false, ciphertext);
+        let header = Header::with_ciphertext(vec![Algorithm::Aes256], random_salt(), false, ciphertext);
         let tampered = header.serialize().replace("|A|", "|S|");
         assert!(matches!(
             Header::parse(tampered.as_bytes()),
@@ -487,7 +493,7 @@ mod tests {
     #[test]
     fn test_ciphertext_hash_mismatch() {
         let ciphertext = b"original data";
-        let header = Header::with_ciphertext(vec![Algorithm::Aes256], [0u8; 32], false, ciphertext);
+        let header = Header::with_ciphertext(vec![Algorithm::Aes256], random_salt(), false, ciphertext);
         let mut full = header.serialize().into_bytes();
         full.extend_from_slice(ciphertext);
         let (parsed, _) = Header::parse(&full).unwrap();

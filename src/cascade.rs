@@ -435,23 +435,30 @@ where
 mod tests {
     use super::*;
     use crate::hybrid::HybridKeypair;
+    use rand::RngCore;
+
+    fn random_password() -> Vec<u8> {
+        let mut bytes = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        bytes.to_vec()
+    }
 
     #[test]
     fn test_single_algorithm() {
         let data = b"Hello, cascrypt!";
-        let password = b"test-password";
-        let encrypted = encrypt(data, password, vec![Algorithm::Aes256]).unwrap();
-        let decrypted = decrypt(&encrypted, password).unwrap();
+        let password = random_password();
+        let encrypted = encrypt(data, &password, vec![Algorithm::Aes256]).unwrap();
+        let decrypted = decrypt(&encrypted, &password).unwrap();
         assert_eq!(data.as_slice(), decrypted.as_slice());
     }
 
     #[test]
     fn test_full_cascade() {
         let data = b"Testing all four algorithms!";
-        let password = b"strong-password-123";
+        let password = random_password();
         let encrypted = encrypt(
             data,
-            password,
+            &password,
             vec![
                 Algorithm::Aes256,
                 Algorithm::TripleDes,
@@ -460,36 +467,38 @@ mod tests {
             ],
         )
         .unwrap();
-        let decrypted = decrypt(&encrypted, password).unwrap();
+        let decrypted = decrypt(&encrypted, &password).unwrap();
         assert_eq!(data.as_slice(), decrypted.as_slice());
     }
 
     #[test]
     fn test_binary_data() {
         let data: Vec<u8> = (0..=255).collect();
-        let password = b"binary-test";
+        let password = random_password();
         let encrypted =
-            encrypt(&data, password, vec![Algorithm::Serpent, Algorithm::Aes256]).unwrap();
-        let decrypted = decrypt(&encrypted, password).unwrap();
+            encrypt(&data, &password, vec![Algorithm::Serpent, Algorithm::Aes256]).unwrap();
+        let decrypted = decrypt(&encrypted, &password).unwrap();
         assert_eq!(data, decrypted);
     }
 
     #[test]
     fn test_wrong_password() {
         let data = b"Secret data";
-        let encrypted = encrypt(data, b"correct", vec![Algorithm::Aes256]).unwrap();
-        assert!(decrypt(&encrypted, b"wrong").is_err());
+        let correct_password = random_password();
+        let wrong_password = random_password();
+        let encrypted = encrypt(data, &correct_password, vec![Algorithm::Aes256]).unwrap();
+        assert!(decrypt(&encrypted, &wrong_password).is_err());
     }
 
     #[test]
     fn test_protected_encrypt_decrypt() {
         let data = b"Secret data with protected header";
-        let password = b"test-password";
+        let password = random_password();
         let keypair = HybridKeypair::generate();
 
         let encrypted = encrypt_protected(
             data,
-            password,
+            &password,
             vec![Algorithm::Aes256, Algorithm::ChaCha20Poly1305],
             &keypair.public,
             false,
@@ -497,24 +506,25 @@ mod tests {
         .unwrap();
 
         assert!(Header::is_encrypted(&encrypted));
-        let decrypted = decrypt_protected(&encrypted, password, &keypair.private).unwrap();
+        let decrypted = decrypt_protected(&encrypted, &password, &keypair.private).unwrap();
         assert_eq!(data.as_slice(), decrypted.as_slice());
     }
 
     #[test]
     fn test_protected_requires_private_key() {
         let data = b"Secret data";
+        let password = random_password();
         let keypair = HybridKeypair::generate();
         let encrypted = encrypt_protected(
             data,
-            b"pass",
+            &password,
             vec![Algorithm::Aes256],
             &keypair.public,
             false,
         )
         .unwrap();
         assert!(matches!(
-            decrypt(&encrypted, b"pass"),
+            decrypt(&encrypted, &password),
             Err(CascadeError::PrivateKeyRequired)
         ));
     }
@@ -522,19 +532,19 @@ mod tests {
     #[test]
     fn test_locked_encrypt_decrypt() {
         let data = b"Locked secret data";
-        let password = b"test-password";
+        let password = random_password();
         let keypair = HybridKeypair::generate();
 
         let encrypted = encrypt_protected(
             data,
-            password,
+            &password,
             vec![Algorithm::Aes256],
             &keypair.public,
             true,
         )
         .unwrap();
         assert!(Header::is_encrypted(&encrypted));
-        let decrypted = decrypt_protected(&encrypted, password, &keypair.private).unwrap();
+        let decrypted = decrypt_protected(&encrypted, &password, &keypair.private).unwrap();
         assert_eq!(data.as_slice(), decrypted.as_slice());
     }
 
@@ -550,24 +560,24 @@ mod tests {
     #[test]
     fn test_ciphertext_tampering_detected() {
         let data = b"Secret data";
-        let password = b"test-password";
-        let mut encrypted = encrypt(data, password, vec![Algorithm::Aes256]).unwrap();
+        let password = random_password();
+        let mut encrypted = encrypt(data, &password, vec![Algorithm::Aes256]).unwrap();
         // Tamper with ciphertext (last byte)
         let len = encrypted.len();
         encrypted[len - 1] ^= 0xFF;
         // Decryption should fail with ciphertext hash mismatch
-        let result = decrypt(&encrypted, password);
+        let result = decrypt(&encrypted, &password);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_protected_ciphertext_tampering_detected() {
         let data = b"Secret data";
-        let password = b"test-password";
+        let password = random_password();
         let keypair = HybridKeypair::generate();
         let mut encrypted = encrypt_protected(
             data,
-            password,
+            &password,
             vec![Algorithm::Aes256],
             &keypair.public,
             false,
@@ -577,7 +587,7 @@ mod tests {
         let len = encrypted.len();
         encrypted[len - 1] ^= 0xFF;
         // Decryption should fail with ciphertext hash mismatch
-        let result = decrypt_protected(&encrypted, password, &keypair.private);
+        let result = decrypt_protected(&encrypted, &password, &keypair.private);
         assert!(result.is_err());
     }
 
@@ -585,15 +595,15 @@ mod tests {
     fn test_duplicate_algorithms_different_keys() {
         // Test that duplicate algorithms in cascade get different keys per layer
         let data = b"Testing duplicate algorithm layers";
-        let password = b"test-password";
+        let password = random_password();
         // Use same algorithm 3 times - each layer should get a unique key
         let encrypted = encrypt(
             data,
-            password,
+            &password,
             vec![Algorithm::Aes256, Algorithm::Aes256, Algorithm::Aes256],
         )
         .unwrap();
-        let decrypted = decrypt(&encrypted, password).unwrap();
+        let decrypted = decrypt(&encrypted, &password).unwrap();
         assert_eq!(data.as_slice(), decrypted.as_slice());
     }
 }
