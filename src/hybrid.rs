@@ -6,6 +6,8 @@
 //!
 //! Both shared secrets are combined via HKDF to derive a symmetric key.
 
+use std::mem::MaybeUninit;
+
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
     ChaCha20Poly1305, Nonce,
@@ -87,14 +89,23 @@ impl HybridKeypair {
         let x25519_public = X25519Public::from(&x25519_secret);
         let (kyber_pk, kyber_sk) = mlkem1024::keypair();
         HybridKeypair {
-            public: HybridPublicKey { x25519: x25519_public.to_bytes(), kyber: kyber_pk.as_bytes().to_vec() },
-            private: HybridPrivateKey { x25519: *x25519_secret.as_bytes(), kyber: kyber_sk.as_bytes().to_vec() },
+            public: HybridPublicKey {
+                x25519: x25519_public.to_bytes(),
+                kyber: kyber_pk.as_bytes().to_vec(),
+            },
+            private: HybridPrivateKey {
+                x25519: *x25519_secret.as_bytes(),
+                kyber: kyber_sk.as_bytes().to_vec(),
+            },
         }
     }
 }
 
 /// Derive a symmetric key from X25519 and ML-KEM shared secrets
-fn derive_symmetric_key(x25519_shared: &[u8], kyber_shared: &[u8]) -> Result<Zeroizing<[u8; 32]>, HybridError> {
+fn derive_symmetric_key(
+    x25519_shared: &[u8],
+    kyber_shared: &[u8],
+) -> Result<Zeroizing<[u8; 32]>, HybridError> {
     // Combine both shared secrets
     let mut combined = Zeroizing::new(Vec::with_capacity(x25519_shared.len() + kyber_shared.len()));
     combined.extend_from_slice(x25519_shared);
@@ -102,14 +113,17 @@ fn derive_symmetric_key(x25519_shared: &[u8], kyber_shared: &[u8]) -> Result<Zer
 
     // Use HKDF to derive final key
     let hk = Hkdf::<Sha256>::new(Some(b"cascrypt-hybrid"), &combined);
-    let mut key = Zeroizing::new([0u8; 32]);
-    hk.expand(b"header-encryption", key.as_mut())
+    let mut key_buf = MaybeUninit::<[u8; 32]>::uninit();
+    hk.expand(b"header-encryption", unsafe { &mut *key_buf.as_mut_ptr() })
         .map_err(|_| HybridError::KeyGeneration)?;
-    Ok(key)
+    Ok(Zeroizing::new(unsafe { key_buf.assume_init() }))
 }
 
 /// Encrypt data using hybrid X25519 + ML-KEM-1024
-pub fn encrypt(plaintext: &[u8], recipient_public: &HybridPublicKey) -> Result<(EncapsulatedKeys, Vec<u8>), HybridError> {
+pub fn encrypt(
+    plaintext: &[u8],
+    recipient_public: &HybridPublicKey,
+) -> Result<(EncapsulatedKeys, Vec<u8>), HybridError> {
     // Generate ephemeral X25519 keypair
     let x25519_ephemeral = EphemeralSecret::random_from_rng(rand::thread_rng());
     let x25519_ephemeral_public = X25519Public::from(&x25519_ephemeral);
@@ -127,8 +141,11 @@ pub fn encrypt(plaintext: &[u8], recipient_public: &HybridPublicKey) -> Result<(
     let symmetric_key = derive_symmetric_key(x25519_shared.as_bytes(), kyber_shared.as_bytes())?;
 
     // Generate nonce
-    let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    let nonce_bytes = {
+        let mut buf = MaybeUninit::<[u8; 12]>::uninit();
+        rand::thread_rng().fill_bytes(unsafe { &mut *buf.as_mut_ptr() });
+        unsafe { buf.assume_init() }
+    };
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     // Encrypt plaintext with ChaCha20-Poly1305

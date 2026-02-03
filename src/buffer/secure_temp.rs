@@ -26,7 +26,10 @@ impl SecureTempFile {
             .prefix(".") // Hidden file, minimal prefix
             .tempfile()?;
         let (file, path) = temp.keep().map_err(|e| e.error)?;
-        Ok(Self { path: Some(path), file })
+        Ok(Self {
+            path: Some(path),
+            file,
+        })
     }
 
     /// Write data to the file, overwriting any existing content.
@@ -179,10 +182,17 @@ mod tests {
         let mode = metadata.permissions().mode() & 0o777;
 
         // Verify file is created with restricted permissions (0600)
-        assert_eq!(mode, 0o600, "Temp file should have mode 0600, got {:o}", mode);
+        assert_eq!(
+            mode, 0o600,
+            "Temp file should have mode 0600, got {:o}",
+            mode
+        );
 
         // Verify filename starts with dot (hidden)
         let filename = path.file_name().unwrap().to_str().unwrap();
-        assert!(filename.starts_with('.'), "Temp file should be hidden (start with .)");
+        assert!(
+            filename.starts_with('.'),
+            "Temp file should be hidden (start with .)"
+        );
     }
 }

@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 fn init_thread_pool() {
     let cores = std::thread::available_parallelism()
@@ -25,15 +25,32 @@ fn init_thread_pool() {
 
 /// All algorithm short flag characters
 const ALGO_CHARS: [char; 20] = [
-    'A', 'T', 'W', 'S', 'C', 'X', 'M', 'B', 'F', 'I',
-    'R', '4', 'K', 'E', '3', '6', 'G', 'P', 'J', 'N',
+    'A', 'T', 'W', 'S', 'C', 'X', 'M', 'B', 'F', 'I', 'R', '4', 'K', 'E', '3', '6', 'G', 'P', 'J',
+    'N',
 ];
 
 /// Algorithm long flag names (lowercase, without --) for case-insensitive matching
 const ALGO_LONG_NAMES: &[&str] = &[
-    "aes", "3des", "twofish", "serpent", "chacha", "xchacha", "camellia",
-    "blowfish", "cast5", "idea", "aria", "sm4", "kuznyechik", "seed",
-    "threefish", "rc6", "magma", "speck", "gift", "ascon",
+    "aes",
+    "3des",
+    "twofish",
+    "serpent",
+    "chacha",
+    "xchacha",
+    "camellia",
+    "blowfish",
+    "cast5",
+    "idea",
+    "aria",
+    "sm4",
+    "kuznyechik",
+    "seed",
+    "threefish",
+    "rc6",
+    "magma",
+    "speck",
+    "gift",
+    "ascon",
 ];
 
 /// Expand combined short flags like -ABC into -A -B -C
@@ -71,8 +88,8 @@ fn expand_combined_flags(args: Vec<String>) -> Vec<String> {
 
 use cascrypt::{
     decrypt_protected_with_buffer_mode, decrypt_with_buffer_mode,
-    encrypt_protected_with_buffer_mode, encrypt_with_buffer_mode,
-    Algorithm, BufferMode, HybridKeypair, HybridPrivateKey, HybridPublicKey,
+    encrypt_protected_with_buffer_mode, encrypt_with_buffer_mode, Algorithm, BufferMode,
+    HybridKeypair, HybridPrivateKey, HybridPublicKey,
 };
 
 const ALL_ALGORITHMS: [Algorithm; 20] = [
@@ -101,13 +118,15 @@ const ALL_ALGORITHMS: [Algorithm; 20] = [
 #[derive(Parser, Debug)]
 #[command(name = "cascrypt")]
 #[command(author, version, about = "Cascading binary encryption tool")]
-#[command(long_about = "Encrypt binary files using multiple layered encryption algorithms.\n\n\
+#[command(
+    long_about = "Encrypt binary files using multiple layered encryption algorithms.\n\n\
     Encryption algorithms are applied in the order specified on the command line.\n\
     Use -d to decrypt (algorithm order is auto-detected from file header).\n\n\
     Algorithm codes: A=AES, T=3DES, W=Twofish, S=Serpent, C=ChaCha20, X=XChaCha20,\n\
     M=Camellia, B=Blowfish, F=CAST5, I=IDEA, R=ARIA, 4=SM4, K=Kuznyechik, E=SEED, 3=Threefish,\n\
     6=RC6, G=Magma, P=Speck, J=GIFT, N=Ascon\n\n\
-    Use 'keygen' subcommand to generate hybrid X25519+ML-KEM keypairs for header protection.")]
+    Use 'keygen' subcommand to generate hybrid X25519+ML-KEM keypairs for header protection."
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -128,7 +147,7 @@ struct Cli {
     #[arg(long = "progress")]
     progress: bool,
 
-    /// Engage puzzle lock (requires --pubkey)
+    /// Engage puzzle lock - obfuscation layer, NOT cryptographic security (requires --pubkey)
     #[arg(long = "lock")]
     lock: bool,
 
@@ -233,10 +252,6 @@ struct Cli {
     #[arg(short = 'o', long = "output")]
     output: Option<PathBuf>,
 
-    /// Encryption key/passphrase (prompts if not provided)
-    #[arg(short = 'k', long = "key")]
-    key: Option<String>,
-
     /// Read key from file
     #[arg(long = "keyfile")]
     keyfile: Option<PathBuf>,
@@ -331,39 +346,66 @@ fn parse_algorithms_in_order() -> Vec<Algorithm> {
 /// Generate N randomly selected algorithms (with duplicates allowed)
 fn generate_random_algorithms(count: usize) -> Vec<Algorithm> {
     let mut rng = rand::thread_rng();
-    (0..count).map(|_| *ALL_ALGORITHMS.choose(&mut rng).unwrap()).collect()
+    (0..count)
+        .map(|_| *ALL_ALGORITHMS.choose(&mut rng).unwrap())
+        .collect()
 }
 
 /// Check if an algorithm provides authenticated encryption (AEAD)
 fn is_aead(algo: Algorithm) -> bool {
-    matches!(algo,
-        Algorithm::Aes256 | Algorithm::ChaCha20Poly1305 |
-        Algorithm::XChaCha20Poly1305 | Algorithm::Ascon128)
+    matches!(
+        algo,
+        Algorithm::Aes256
+            | Algorithm::ChaCha20Poly1305
+            | Algorithm::XChaCha20Poly1305
+            | Algorithm::Ascon128
+    )
+}
+
+/// Check if an algorithm uses a 64-bit block size (vulnerable to birthday attacks)
+fn is_64bit_block(algo: Algorithm) -> bool {
+    matches!(
+        algo,
+        Algorithm::TripleDes
+            | Algorithm::Blowfish
+            | Algorithm::Cast5
+            | Algorithm::Idea
+            | Algorithm::Magma
+    )
 }
 
 /// Check if any individual algorithm flags were specified
 fn has_algorithm_flags(cli: &Cli) -> bool {
-    cli.aes > 0 || cli.triple_des > 0 || cli.twofish > 0 || cli.serpent > 0
-        || cli.chacha > 0 || cli.xchacha > 0 || cli.camellia > 0 || cli.blowfish > 0
-        || cli.cast5 > 0 || cli.idea > 0 || cli.aria > 0 || cli.sm4 > 0 || cli.kuznyechik > 0
-        || cli.seed > 0 || cli.threefish > 0 || cli.rc6 > 0 || cli.magma > 0 || cli.speck > 0
-        || cli.gift > 0 || cli.ascon > 0
+    cli.aes > 0
+        || cli.triple_des > 0
+        || cli.twofish > 0
+        || cli.serpent > 0
+        || cli.chacha > 0
+        || cli.xchacha > 0
+        || cli.camellia > 0
+        || cli.blowfish > 0
+        || cli.cast5 > 0
+        || cli.idea > 0
+        || cli.aria > 0
+        || cli.sm4 > 0
+        || cli.kuznyechik > 0
+        || cli.seed > 0
+        || cli.threefish > 0
+        || cli.rc6 > 0
+        || cli.magma > 0
+        || cli.speck > 0
+        || cli.gift > 0
+        || cli.ascon > 0
 }
 
-fn get_password(cli: &mut Cli) -> Result<Zeroizing<Vec<u8>>> {
-    // Priority: keyfile > key argument > interactive prompt
+fn get_password(cli: &Cli) -> Result<Zeroizing<Vec<u8>>> {
+    // Priority: keyfile > interactive prompt
     if let Some(keyfile) = &cli.keyfile {
         let key = fs::read(keyfile).context("Failed to read keyfile")?;
         return Ok(Zeroizing::new(key));
     }
 
-    if let Some(mut key) = cli.key.take() {
-        let bytes = key.as_bytes().to_vec();
-        key.zeroize();
-        return Ok(Zeroizing::new(bytes));
-    }
-
-    // Interactive prompt
+    // Interactive prompt (no echo)
     let prompt = if cli.decrypt {
         "Enter decryption password: "
     } else {
@@ -391,7 +433,8 @@ fn read_input(path: &Path) -> Result<Zeroizing<Vec<u8>>> {
             .context("Failed to read from stdin")?;
         Ok(Zeroizing::new(data))
     } else {
-        let data = fs::read(path).with_context(|| format!("Failed to read input file: {}", path.display()))?;
+        let data = fs::read(path)
+            .with_context(|| format!("Failed to read input file: {}", path.display()))?;
         Ok(Zeroizing::new(data))
     }
 }
@@ -402,7 +445,8 @@ fn write_output(path: &Path, data: &[u8]) -> Result<()> {
             .write_all(data)
             .context("Failed to write to stdout")?;
     } else {
-        fs::write(path, data).with_context(|| format!("Failed to write output file: {}", path.display()))?;
+        fs::write(path, data)
+            .with_context(|| format!("Failed to write output file: {}", path.display()))?;
     }
     Ok(())
 }
@@ -434,10 +478,12 @@ fn create_progress_bar(total: u64, msg: &str) -> ProgressBar {
     } else {
         "{spinner:.cyan} {msg:.bold.cyan} │{bar:40.cyan/dim}│ {pos}/{len} 󰥔 {elapsed}"
     };
-    pb.set_style(ProgressStyle::with_template(template)
-        .unwrap()
-        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "✓"])
-        .progress_chars("━╾─"));
+    pb.set_style(
+        ProgressStyle::with_template(template)
+            .unwrap()
+            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "✓"])
+            .progress_chars("━╾─"),
+    );
     pb.set_message(msg.to_string());
     pb.enable_steady_tick(std::time::Duration::from_millis(80));
     pb
@@ -494,20 +540,25 @@ fn cmd_list_algorithms() {
     println!("  Flag  Long           Algorithm             Type    Key Size");
     println!("  ────  ────────────   ─────────────────     ─────   ────────");
     for algo in ALL_ALGORITHMS {
-        let long = LONG_FLAGS.iter()
+        let long = LONG_FLAGS
+            .iter()
             .find(|(_, a)| *a == algo)
-            .map(|(l, _)| &l[2..])  // strip "--" prefix
+            .map(|(l, _)| &l[2..]) // strip "--" prefix
             .unwrap_or("");
-        println!("  -{:<4} --{:<12} {:<21} {:<7} {}-bit",
-            algo.code(), long, algo.name(),
+        println!(
+            "  -{:<4} --{:<12} {:<21} {:<7} {}-bit",
+            algo.code(),
+            long,
+            algo.name(),
             if is_aead(algo) { "AEAD" } else { "Block" },
-            algo.key_size() * 8);
+            algo.key_size() * 8
+        );
     }
     println!("\nUse flags in any order. Combine short flags: -ASC or -A -S -C");
     println!("Repeat flags for multiple layers: -AAA or -A -A -A");
 }
 
-fn cmd_encrypt_decrypt(mut cli: Cli) -> Result<()> {
+fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
     // Handle --list before requiring input/output
     if cli.list {
         cmd_list_algorithms();
@@ -534,7 +585,7 @@ fn cmd_encrypt_decrypt(mut cli: Cli) -> Result<()> {
     let input_data = read_input(&input)?;
 
     // Get password
-    let password = get_password(&mut cli)?;
+    let password = get_password(&cli)?;
 
     let show_progress = cli.progress && !cli.silent;
 
@@ -542,19 +593,48 @@ fn cmd_encrypt_decrypt(mut cli: Cli) -> Result<()> {
         // Decrypt mode - algorithm order is in the header
         if let Some(privkey_path) = &cli.privkey {
             let private_key = load_private_key(privkey_path)?;
-            if !cli.silent { eprintln!("󰦝 Decrypting with protected header..."); }
-            let pb = if show_progress { Some(create_progress_bar(100, "󰌊 Decrypting")) } else { None };
-            let result = decrypt_protected_with_buffer_mode(&input_data, &password, &private_key, buffer_mode, |cur, total| {
-                if let Some(pb) = &pb { pb.set_length(total as u64); pb.set_position(cur as u64); }
-            }).context("Decryption failed")?;
-            if let Some(pb) = pb { pb.finish(); }
+            if !cli.silent {
+                eprintln!("󰦝 Decrypting with protected header...");
+            }
+            let pb = if show_progress {
+                Some(create_progress_bar(100, "󰌊 Decrypting"))
+            } else {
+                None
+            };
+            let result = decrypt_protected_with_buffer_mode(
+                &input_data,
+                &password,
+                &private_key,
+                buffer_mode,
+                |cur, total| {
+                    if let Some(pb) = &pb {
+                        pb.set_length(total as u64);
+                        pb.set_position(cur as u64);
+                    }
+                },
+            )
+            .context("Decryption failed")?;
+            if let Some(pb) = pb {
+                pb.finish();
+            }
             result
         } else {
-            let pb = if show_progress { Some(create_progress_bar(100, "󰌊 Decrypting")) } else { None };
-            let result = decrypt_with_buffer_mode(&input_data, &password, buffer_mode, |cur, total| {
-                if let Some(pb) = &pb { pb.set_length(total as u64); pb.set_position(cur as u64); }
-            }).context("Decryption failed")?;
-            if let Some(pb) = pb { pb.finish(); }
+            let pb = if show_progress {
+                Some(create_progress_bar(100, "󰌊 Decrypting"))
+            } else {
+                None
+            };
+            let result =
+                decrypt_with_buffer_mode(&input_data, &password, buffer_mode, |cur, total| {
+                    if let Some(pb) = &pb {
+                        pb.set_length(total as u64);
+                        pb.set_position(cur as u64);
+                    }
+                })
+                .context("Decryption failed")?;
+            if let Some(pb) = pb {
+                pb.finish();
+            }
             result
         }
     } else {
@@ -596,14 +676,31 @@ fn cmd_encrypt_decrypt(mut cli: Cli) -> Result<()> {
                 algo_count,
                 if algo_count == 1 { "" } else { "s" },
                 if algo_count <= 5 {
-                    format!(": {}", algorithms.iter().map(Algorithm::name).collect::<Vec<_>>().join(" → "))
-                } else { String::new() }
+                    format!(
+                        ": {}",
+                        algorithms
+                            .iter()
+                            .map(Algorithm::name)
+                            .collect::<Vec<_>>()
+                            .join(" → ")
+                    )
+                } else {
+                    String::new()
+                }
             );
             // Warn if outer layer lacks authentication
             if let Some(last) = algorithms.last() {
                 if !is_aead(*last) {
                     eprintln!("󰀦 Warning: Outer layer ({}) is not AEAD - consider ending with -A, -C, -X, or -N for authentication", last.name());
                 }
+            }
+            // Warn about 64-bit block ciphers (birthday attack vulnerability)
+            let weak_ciphers: Vec<_> = algorithms.iter().filter(|a| is_64bit_block(**a)).collect();
+            if !weak_ciphers.is_empty() {
+                let names: Vec<_> = weak_ciphers.iter().map(|a| a.name()).collect();
+                eprintln!("󰀦 Warning: 64-bit block cipher{} ({}) - vulnerable to birthday attacks on large files (>32GB)",
+                    if weak_ciphers.len() > 1 { "s" } else { "" },
+                    names.join(", "));
             }
         }
 
@@ -616,20 +713,54 @@ fn cmd_encrypt_decrypt(mut cli: Cli) -> Result<()> {
                     eprintln!("󰦝 Using protected header (hybrid X25519+ML-KEM encryption)");
                 }
             }
-            let pb = if show_progress { Some(create_progress_bar(algo_count as u64, "󰌆 Encrypting")) } else { None };
-            let result = encrypt_protected_with_buffer_mode(&input_data, &password, algorithms, &public_key, cli.lock, buffer_mode, |cur, total| {
-                if let Some(pb) = &pb { pb.set_length(total as u64); pb.set_position(cur as u64); }
-            }).context("Encryption failed")?;
-            if let Some(pb) = pb { pb.finish(); }
+            let pb = if show_progress {
+                Some(create_progress_bar(algo_count as u64, "󰌆 Encrypting"))
+            } else {
+                None
+            };
+            let result = encrypt_protected_with_buffer_mode(
+                &input_data,
+                &password,
+                algorithms,
+                &public_key,
+                cli.lock,
+                buffer_mode,
+                |cur, total| {
+                    if let Some(pb) = &pb {
+                        pb.set_length(total as u64);
+                        pb.set_position(cur as u64);
+                    }
+                },
+            )
+            .context("Encryption failed")?;
+            if let Some(pb) = pb {
+                pb.finish();
+            }
             result
         } else if cli.lock {
             anyhow::bail!("--lock requires --pubkey for protected header encryption");
         } else {
-            let pb = if show_progress { Some(create_progress_bar(algo_count as u64, "󰌆 Encrypting")) } else { None };
-            let result = encrypt_with_buffer_mode(&input_data, &password, algorithms, buffer_mode, |cur, total| {
-                if let Some(pb) = &pb { pb.set_length(total as u64); pb.set_position(cur as u64); }
-            }).context("Encryption failed")?;
-            if let Some(pb) = pb { pb.finish(); }
+            let pb = if show_progress {
+                Some(create_progress_bar(algo_count as u64, "󰌆 Encrypting"))
+            } else {
+                None
+            };
+            let result = encrypt_with_buffer_mode(
+                &input_data,
+                &password,
+                algorithms,
+                buffer_mode,
+                |cur, total| {
+                    if let Some(pb) = &pb {
+                        pb.set_length(total as u64);
+                        pb.set_position(cur as u64);
+                    }
+                },
+            )
+            .context("Encryption failed")?;
+            if let Some(pb) = pb {
+                pb.finish();
+            }
             result
         }
     };
