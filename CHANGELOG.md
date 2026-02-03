@@ -4,6 +4,29 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.1] - 2026-02-02
+
+### Changed
+- Removed `-k`/`--key` CLI argument (passwords were visible in process list, shell history)
+- Password now only accepted via `--keyfile` or interactive prompt (no echo)
+- Argon2 parameters strengthened for new files: 64 MiB memory, 3 iterations, 4 parallel lanes (was 19 MiB/2/1)
+- Small files now padded to 1KB minimum before encryption (hides exact size)
+
+### CLI Breaking Changes
+- Scripts using `-k`/`--key` must switch to `--keyfile` or interactive input
+- File format is fully backward compatible - old encrypted files decrypt without issue
+
+### Added
+- Warning when using 64-bit block ciphers (3DES, Blowfish, CAST5, IDEA, Magma) - vulnerable to birthday attacks on large files
+- Memory locking (`mlock`) for derived keys to prevent swapping to disk
+- Backward-compatible padding format (old encrypted files still decrypt correctly)
+
+### Security
+- **Fixed:** CLI password exposure via `ps`, `/proc`, shell history - now requires keyfile or interactive input
+- **Fixed:** Weak Argon2 defaults - increased to OWASP 2024 recommendations
+- **Fixed:** Timing side-channel in header hash verification - now uses constant-time comparison
+- **Fixed:** Small file size leakage - minimum 1KB padding hides tiny files
+
 ## [0.4.0] - 2026-01-24
 
 ### Changed
