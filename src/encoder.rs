@@ -6,11 +6,20 @@ use rand::RngCore;
 /// while keeping overhead acceptable for tiny files.
 const MIN_PADDED_SIZE: usize = 1024;
 
+/// Maximum encodable size (u32::MAX, ~4 GiB).
+/// The length prefix is 4 bytes, so data larger than this cannot be represented.
+const MAX_ENCODE_SIZE: usize = u32::MAX as usize;
+
 /// Encode binary data to base64 string with minimum padding.
 /// Format: [4-byte LE length][original data][random padding to MIN_PADDED_SIZE]
 /// This hides the exact size of small files.
+///
+/// Returns an error if `data` exceeds 4 GiB (the length prefix is 4 bytes).
 #[inline]
-pub fn encode(data: &[u8]) -> String {
+pub fn encode(data: &[u8]) -> Result<String, &'static str> {
+    if data.len() > MAX_ENCODE_SIZE {
+        return Err("data exceeds maximum encodable size (4 GiB)");
+    }
     let len = data.len() as u32;
     let total_size = (4 + data.len()).max(MIN_PADDED_SIZE);
     let padding_len = total_size - 4 - data.len();
@@ -26,21 +35,21 @@ pub fn encode(data: &[u8]) -> String {
         padded.extend_from_slice(&padding);
     }
 
-    STANDARD.encode(&padded)
+    Ok(STANDARD.encode(&padded))
 }
 
 /// Decode base64 string to binary data, stripping padding.
-/// Backward compatible: tries new format (with length prefix) first,
+/// Backward compatible: tries length-prefixed format first,
 /// falls back to legacy format (raw base64) if length is invalid.
 #[inline]
 pub fn decode(encoded: &str) -> Result<Vec<u8>, base64::DecodeError> {
     let padded = STANDARD.decode(encoded)?;
 
-    // Try new format with length prefix
+    // Try format with 4-byte length prefix
     if padded.len() >= 4 {
         let len = u32::from_le_bytes([padded[0], padded[1], padded[2], padded[3]]) as usize;
 
-        // Valid new format: length makes sense and data would fit
+        // Valid format: length makes sense and data would fit
         if len <= padded.len() - 4 {
             return Ok(padded[4..4 + len].to_vec());
         }
@@ -57,7 +66,7 @@ mod tests {
     #[test]
     fn test_roundtrip() {
         let original = b"Hello, cascrypt!";
-        let encoded = encode(original);
+        let encoded = encode(original).unwrap();
         let decoded = decode(&encoded).unwrap();
         assert_eq!(original.as_slice(), decoded.as_slice());
     }
@@ -65,7 +74,7 @@ mod tests {
     #[test]
     fn test_binary_data() {
         let binary: Vec<u8> = (0..=255).collect();
-        let encoded = encode(&binary);
+        let encoded = encode(&binary).unwrap();
         let decoded = decode(&encoded).unwrap();
         assert_eq!(binary, decoded);
     }
@@ -73,7 +82,7 @@ mod tests {
     #[test]
     fn test_empty_data() {
         let original: &[u8] = b"";
-        let encoded = encode(original);
+        let encoded = encode(original).unwrap();
         let decoded = decode(&encoded).unwrap();
         assert_eq!(original, decoded.as_slice());
     }
@@ -82,7 +91,7 @@ mod tests {
     fn test_small_files_padded() {
         // Small files should be padded to minimum size
         let small = b"tiny";
-        let encoded = encode(small);
+        let encoded = encode(small).unwrap();
         let decoded_raw = STANDARD.decode(&encoded).unwrap();
         // Should be at least MIN_PADDED_SIZE bytes before base64
         assert!(decoded_raw.len() >= MIN_PADDED_SIZE);
@@ -95,7 +104,7 @@ mod tests {
     fn test_large_files_not_over_padded() {
         // Large files should only have length prefix overhead
         let large: Vec<u8> = vec![0x42; 2048];
-        let encoded = encode(&large);
+        let encoded = encode(&large).unwrap();
         let decoded_raw = STANDARD.decode(&encoded).unwrap();
         // Should be exactly 4 + data length (no extra padding)
         assert_eq!(decoded_raw.len(), 4 + large.len());

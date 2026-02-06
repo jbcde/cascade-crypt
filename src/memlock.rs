@@ -67,6 +67,14 @@ impl Drop for LockedVec {
     }
 }
 
+impl std::ops::Deref for LockedVec {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        &self.data
+    }
+}
+
 impl AsRef<[u8]> for LockedVec {
     fn as_ref(&self) -> &[u8] {
         &self.data

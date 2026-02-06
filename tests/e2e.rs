@@ -996,7 +996,7 @@ fn test_stdin_input() {
 
     // Encrypt from stdin
     let mut child = Command::new(binary_path())
-        .args(&[
+        .args([
             "-A",
             "-i",
             "-",

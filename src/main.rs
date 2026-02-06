@@ -1,8 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{ArgAction, Parser, Subcommand};
-use indicatif::{ProgressBar, ProgressStyle};
 use rand::seq::SliceRandom;
-use std::collections::HashSet;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -56,7 +53,7 @@ const ALGO_LONG_NAMES: &[&str] = &[
 /// Expand combined short flags like -ABC into -A -B -C
 /// Also normalizes algorithm long flags to lowercase for case-insensitive matching
 fn expand_combined_flags(args: Vec<String>) -> Vec<String> {
-    let algo_set: HashSet<char> = ALGO_CHARS.into_iter().collect();
+    let algo_chars = &ALGO_CHARS;
     let mut result = Vec::with_capacity(args.len());
 
     for arg in args {
@@ -73,7 +70,7 @@ fn expand_combined_flags(args: Vec<String>) -> Vec<String> {
         if arg.starts_with('-') && !arg.starts_with("--") && arg.len() > 2 {
             let chars: Vec<char> = arg[1..].chars().collect();
             // Only expand if ALL characters are algorithm flags
-            if chars.iter().all(|c| algo_set.contains(c)) {
+            if chars.iter().all(|c| algo_chars.contains(c)) {
                 for c in chars {
                     result.push(format!("-{}", c));
                 }
@@ -115,180 +112,344 @@ const ALL_ALGORITHMS: [Algorithm; 20] = [
     Algorithm::Ascon128,
 ];
 
-#[derive(Parser, Debug)]
-#[command(name = "cascrypt")]
-#[command(author, version, about = "Cascading binary encryption tool")]
-#[command(
-    long_about = "Encrypt binary files using multiple layered encryption algorithms.\n\n\
-    Encryption algorithms are applied in the order specified on the command line.\n\
-    Use -d to decrypt (algorithm order is auto-detected from file header).\n\n\
-    Algorithm codes: A=AES, T=3DES, W=Twofish, S=Serpent, C=ChaCha20, X=XChaCha20,\n\
-    M=Camellia, B=Blowfish, F=CAST5, I=IDEA, R=ARIA, 4=SM4, K=Kuznyechik, E=SEED, 3=Threefish,\n\
-    6=RC6, G=Magma, P=Speck, J=GIFT, N=Ascon\n\n\
-    Use 'keygen' subcommand to generate hybrid X25519+ML-KEM keypairs for header protection."
-)]
+// ===== CLI structures (no derive macros) =====
+
 struct Cli {
-    #[command(subcommand)]
     command: Option<Commands>,
-
-    /// Decrypt mode (encryption is default)
-    #[arg(short = 'd', long = "decrypt")]
     decrypt: bool,
-
-    /// Use N randomly selected algorithms (with duplicates). Disables individual algorithm flags.
-    #[arg(short = 'n', long = "random")]
     random_count: Option<usize>,
-
-    /// Silent mode - suppress all status output (for security)
-    #[arg(short = 's', long = "silent")]
     silent: bool,
-
-    /// Show progress bar during encryption/decryption
-    #[arg(long = "progress")]
     progress: bool,
-
-    /// Engage puzzle lock - obfuscation layer, NOT cryptographic security (requires --pubkey)
-    #[arg(long = "lock")]
     lock: bool,
-
-    /// List all available algorithms and exit
-    #[arg(long = "list")]
     list: bool,
-
-    /// Buffer mode: 'ram' (force RAM), 'disk' (force disk), 'auto' (default, switches under pressure)
-    #[arg(long = "buffer", value_name = "MODE")]
     buffer_mode: Option<String>,
-
-    // ===== Original algorithms =====
-    /// Use AES-256-GCM encryption [code: A]
-    #[arg(short = 'A', long = "aes", action = ArgAction::Count)]
     aes: u8,
-
-    /// Use Triple-DES (3DES) encryption [code: T]
-    #[arg(short = 'T', long = "3des", action = ArgAction::Count)]
     triple_des: u8,
-
-    /// Use Twofish-256 encryption [code: W]
-    #[arg(short = 'W', long = "twofish", action = ArgAction::Count)]
     twofish: u8,
-
-    /// Use Serpent-256 encryption [code: S]
-    #[arg(short = 'S', long = "serpent", action = ArgAction::Count)]
     serpent: u8,
-
-    // ===== Stream ciphers =====
-    /// Use ChaCha20-Poly1305 encryption [code: C]
-    #[arg(short = 'C', long = "chacha", action = ArgAction::Count)]
     chacha: u8,
-
-    /// Use XChaCha20-Poly1305 encryption (extended nonce) [code: X]
-    #[arg(short = 'X', long = "xchacha", action = ArgAction::Count)]
     xchacha: u8,
-
-    // ===== Additional block ciphers =====
-    /// Use Camellia-256 encryption [code: M]
-    #[arg(short = 'M', long = "camellia", action = ArgAction::Count)]
     camellia: u8,
-
-    /// Use Blowfish-256 encryption [code: B]
-    #[arg(short = 'B', long = "blowfish", action = ArgAction::Count)]
     blowfish: u8,
-
-    /// Use CAST5 encryption [code: F]
-    #[arg(short = 'F', long = "cast5", action = ArgAction::Count)]
     cast5: u8,
-
-    /// Use IDEA encryption [code: I]
-    #[arg(short = 'I', long = "idea", action = ArgAction::Count)]
     idea: u8,
-
-    /// Use ARIA-256 encryption [code: R]
-    #[arg(short = 'R', long = "aria", action = ArgAction::Count)]
     aria: u8,
-
-    /// Use SM4 encryption (Chinese standard) [code: 4]
-    #[arg(short = '4', long = "sm4", action = ArgAction::Count)]
     sm4: u8,
-
-    /// Use Kuznyechik encryption (Russian GOST) [code: K]
-    #[arg(short = 'K', long = "kuznyechik", action = ArgAction::Count)]
     kuznyechik: u8,
-
-    /// Use SEED encryption (Korean standard) [code: E]
-    #[arg(short = 'E', long = "seed", action = ArgAction::Count)]
     seed: u8,
-
-    /// Use Threefish-256 encryption (Schneier's cipher) [code: 3]
-    #[arg(short = '3', long = "threefish", action = ArgAction::Count)]
     threefish: u8,
-
-    // ===== cipher 0.5 ciphers =====
-    /// Use RC6 encryption (AES finalist) [code: 6]
-    #[arg(short = '6', long = "rc6", action = ArgAction::Count)]
     rc6: u8,
-
-    /// Use Magma encryption (Russian GOST 28147-89) [code: G]
-    #[arg(short = 'G', long = "magma", action = ArgAction::Count)]
     magma: u8,
-
-    /// Use Speck128/256 encryption (NSA lightweight) [code: P]
-    #[arg(short = 'P', long = "speck", action = ArgAction::Count)]
     speck: u8,
-
-    /// Use GIFT-128 encryption (lightweight cipher) [code: J]
-    #[arg(short = 'J', long = "gift", action = ArgAction::Count)]
     gift: u8,
-
-    /// Use Ascon-128 encryption (NIST 2023 winner) [code: N]
-    #[arg(short = 'N', long = "ascon", action = ArgAction::Count)]
     ascon: u8,
-
-    // ===== I/O options =====
-    /// Input file (use '-' for stdin)
-    #[arg(short = 'i', long = "input")]
     input: Option<PathBuf>,
-
-    /// Output file (use '-' for stdout)
-    #[arg(short = 'o', long = "output")]
     output: Option<PathBuf>,
-
-    /// Read key from file
-    #[arg(long = "keyfile")]
     keyfile: Option<PathBuf>,
-
-    // ===== Hybrid encryption options =====
-    /// Recipient's public key file for header protection (encrypt mode)
-    #[arg(long = "pubkey")]
     pubkey: Option<PathBuf>,
-
-    /// Private key file for decrypting protected headers (decrypt mode)
-    #[arg(long = "privkey")]
     privkey: Option<PathBuf>,
 }
 
-#[derive(Subcommand, Debug)]
 enum Commands {
-    /// Generate a new hybrid X25519+ML-KEM keypair for header protection
     Keygen {
-        /// Output file for the keypair (JSON format)
-        #[arg(short = 'o', long = "output", required = true)]
         output: PathBuf,
-
-        /// Also export public key to separate file
-        #[arg(long = "export-pubkey")]
         export_pubkey: Option<PathBuf>,
     },
-
-    /// Export public key from a keypair file
     ExportPubkey {
-        /// Input keypair file
-        #[arg(short = 'i', long = "input", required = true)]
         input: PathBuf,
-
-        /// Output file for public key
-        #[arg(short = 'o', long = "output", required = true)]
         output: PathBuf,
     },
+}
+
+// ===== Argument parsing =====
+
+fn print_version() {
+    println!("cascrypt {}", env!("CARGO_PKG_VERSION"));
+}
+
+fn print_help() {
+    println!(
+        "\
+cascrypt {} — Cascading binary encryption tool
+
+Encrypt binary files using multiple layered encryption algorithms.
+
+Encryption algorithms are applied in the order specified on the command line.
+Use -d to decrypt (algorithm order is auto-detected from file header).
+
+Algorithm codes: A=AES, T=3DES, W=Twofish, S=Serpent, C=ChaCha20, X=XChaCha20,
+M=Camellia, B=Blowfish, F=CAST5, I=IDEA, R=ARIA, 4=SM4, K=Kuznyechik, E=SEED,
+3=Threefish, 6=RC6, G=Magma, P=Speck, J=GIFT, N=Ascon
+
+Use 'keygen' subcommand to generate hybrid X25519+ML-KEM keypairs for header protection.
+
+USAGE:
+    cascrypt [OPTIONS] -i <FILE> -o <FILE>
+    cascrypt keygen -o <FILE> [--export-pubkey <FILE>]
+    cascrypt export-pubkey -i <FILE> -o <FILE>
+
+OPTIONS:
+    -d, --decrypt            Decrypt mode (encryption is default)
+    -n, --random <N>         Use N randomly selected algorithms
+    -s, --silent             Suppress all status output
+        --progress           Show progress during encryption/decryption
+        --lock               Engage puzzle lock (requires --pubkey)
+        --list               List all available algorithms and exit
+        --buffer <MODE>      Buffer mode: ram, disk, or auto (default)
+    -i, --input <FILE>       Input file (use '-' for stdin)
+    -o, --output <FILE>      Output file (use '-' for stdout)
+        --keyfile <FILE>     Read key from file
+        --pubkey <FILE>      Public key for header protection (encrypt)
+        --privkey <FILE>     Private key for protected headers (decrypt)
+    -h, --help               Print this help message
+    -V, --version            Print version
+
+ALGORITHMS:
+    -A, --aes            AES-256-GCM                 [AEAD]
+    -T, --3des           Triple-DES (3DES)           [Block]
+    -W, --twofish        Twofish-256                 [Block]
+    -S, --serpent        Serpent-256                  [Block]
+    -C, --chacha         ChaCha20-Poly1305           [AEAD]
+    -X, --xchacha        XChaCha20-Poly1305          [AEAD]
+    -M, --camellia       Camellia-256                [Block]
+    -B, --blowfish       Blowfish-256                [Block]
+    -F, --cast5          CAST5                       [Block]
+    -I, --idea           IDEA                        [Block]
+    -R, --aria           ARIA-256                    [Block]
+    -4, --sm4            SM4                         [Block]
+    -K, --kuznyechik     Kuznyechik (GOST)           [Block]
+    -E, --seed           SEED                        [Block]
+    -3, --threefish      Threefish-256               [Block]
+    -6, --rc6            RC6                         [Block]
+    -G, --magma          Magma (GOST 28147-89)       [Block]
+    -P, --speck          Speck128/256                [Block]
+    -J, --gift           GIFT-128                    [Block]
+    -N, --ascon          Ascon-128 (NIST 2023)       [AEAD]
+
+Combine short flags: -ASC or -A -S -C
+Repeat flags for multiple layers: -AAA or -A -A -A",
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+/// Take the next argument as a value for an option, or return an error.
+fn take_value(args: &[String], i: &mut usize, flag: &str) -> Result<String> {
+    *i += 1;
+    args.get(*i)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("{} requires a value", flag))
+}
+
+/// Increment the counter for an algorithm short flag.
+fn count_algo(cli: &mut Cli, code: char) {
+    match code {
+        'A' => cli.aes = cli.aes.saturating_add(1),
+        'T' => cli.triple_des = cli.triple_des.saturating_add(1),
+        'W' => cli.twofish = cli.twofish.saturating_add(1),
+        'S' => cli.serpent = cli.serpent.saturating_add(1),
+        'C' => cli.chacha = cli.chacha.saturating_add(1),
+        'X' => cli.xchacha = cli.xchacha.saturating_add(1),
+        'M' => cli.camellia = cli.camellia.saturating_add(1),
+        'B' => cli.blowfish = cli.blowfish.saturating_add(1),
+        'F' => cli.cast5 = cli.cast5.saturating_add(1),
+        'I' => cli.idea = cli.idea.saturating_add(1),
+        'R' => cli.aria = cli.aria.saturating_add(1),
+        '4' => cli.sm4 = cli.sm4.saturating_add(1),
+        'K' => cli.kuznyechik = cli.kuznyechik.saturating_add(1),
+        'E' => cli.seed = cli.seed.saturating_add(1),
+        '3' => cli.threefish = cli.threefish.saturating_add(1),
+        '6' => cli.rc6 = cli.rc6.saturating_add(1),
+        'G' => cli.magma = cli.magma.saturating_add(1),
+        'P' => cli.speck = cli.speck.saturating_add(1),
+        'J' => cli.gift = cli.gift.saturating_add(1),
+        'N' => cli.ascon = cli.ascon.saturating_add(1),
+        _ => {}
+    }
+}
+
+/// Increment the counter for an algorithm long flag.
+fn count_algo_long(cli: &mut Cli, name: &str) {
+    match name {
+        "aes" => cli.aes = cli.aes.saturating_add(1),
+        "3des" => cli.triple_des = cli.triple_des.saturating_add(1),
+        "twofish" => cli.twofish = cli.twofish.saturating_add(1),
+        "serpent" => cli.serpent = cli.serpent.saturating_add(1),
+        "chacha" => cli.chacha = cli.chacha.saturating_add(1),
+        "xchacha" => cli.xchacha = cli.xchacha.saturating_add(1),
+        "camellia" => cli.camellia = cli.camellia.saturating_add(1),
+        "blowfish" => cli.blowfish = cli.blowfish.saturating_add(1),
+        "cast5" => cli.cast5 = cli.cast5.saturating_add(1),
+        "idea" => cli.idea = cli.idea.saturating_add(1),
+        "aria" => cli.aria = cli.aria.saturating_add(1),
+        "sm4" => cli.sm4 = cli.sm4.saturating_add(1),
+        "kuznyechik" => cli.kuznyechik = cli.kuznyechik.saturating_add(1),
+        "seed" => cli.seed = cli.seed.saturating_add(1),
+        "threefish" => cli.threefish = cli.threefish.saturating_add(1),
+        "rc6" => cli.rc6 = cli.rc6.saturating_add(1),
+        "magma" => cli.magma = cli.magma.saturating_add(1),
+        "speck" => cli.speck = cli.speck.saturating_add(1),
+        "gift" => cli.gift = cli.gift.saturating_add(1),
+        "ascon" => cli.ascon = cli.ascon.saturating_add(1),
+        _ => {}
+    }
+}
+
+fn parse_keygen(args: &[String], start: usize) -> Result<Commands> {
+    let mut output: Option<PathBuf> = None;
+    let mut export_pubkey: Option<PathBuf> = None;
+    let mut i = start;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" | "--output" => output = Some(PathBuf::from(take_value(args, &mut i, "-o")?)),
+            "--export-pubkey" => {
+                export_pubkey = Some(PathBuf::from(take_value(args, &mut i, "--export-pubkey")?))
+            }
+            other => anyhow::bail!("Unknown option for keygen: {}", other),
+        }
+        i += 1;
+    }
+    let output = output.ok_or_else(|| anyhow::anyhow!("keygen requires -o <output>"))?;
+    Ok(Commands::Keygen {
+        output,
+        export_pubkey,
+    })
+}
+
+fn parse_export_pubkey(args: &[String], start: usize) -> Result<Commands> {
+    let mut input: Option<PathBuf> = None;
+    let mut output: Option<PathBuf> = None;
+    let mut i = start;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-i" | "--input" => input = Some(PathBuf::from(take_value(args, &mut i, "-i")?)),
+            "-o" | "--output" => output = Some(PathBuf::from(take_value(args, &mut i, "-o")?)),
+            other => anyhow::bail!("Unknown option for export-pubkey: {}", other),
+        }
+        i += 1;
+    }
+    let input = input.ok_or_else(|| anyhow::anyhow!("export-pubkey requires -i <input>"))?;
+    let output = output.ok_or_else(|| anyhow::anyhow!("export-pubkey requires -o <output>"))?;
+    Ok(Commands::ExportPubkey { input, output })
+}
+
+fn parse_cli(args: Vec<String>) -> Result<Cli> {
+    let mut cli = Cli {
+        command: None,
+        decrypt: false,
+        random_count: None,
+        silent: false,
+        progress: false,
+        lock: false,
+        list: false,
+        buffer_mode: None,
+        aes: 0,
+        triple_des: 0,
+        twofish: 0,
+        serpent: 0,
+        chacha: 0,
+        xchacha: 0,
+        camellia: 0,
+        blowfish: 0,
+        cast5: 0,
+        idea: 0,
+        aria: 0,
+        sm4: 0,
+        kuznyechik: 0,
+        seed: 0,
+        threefish: 0,
+        rc6: 0,
+        magma: 0,
+        speck: 0,
+        gift: 0,
+        ascon: 0,
+        input: None,
+        output: None,
+        keyfile: None,
+        pubkey: None,
+        privkey: None,
+    };
+
+    // args[0] is the binary name, skip it
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
+        match arg.as_str() {
+            // Subcommands
+            "keygen" => {
+                cli.command = Some(parse_keygen(&args, i + 1)?);
+                return Ok(cli);
+            }
+            "export-pubkey" => {
+                cli.command = Some(parse_export_pubkey(&args, i + 1)?);
+                return Ok(cli);
+            }
+            // Help/version (exit immediately)
+            "-h" | "--help" => {
+                print_help();
+                std::process::exit(0);
+            }
+            "-V" | "--version" => {
+                print_version();
+                std::process::exit(0);
+            }
+            // Boolean flags
+            "-d" | "--decrypt" => cli.decrypt = true,
+            "-s" | "--silent" => cli.silent = true,
+            "--progress" => cli.progress = true,
+            "--lock" => cli.lock = true,
+            "--list" => cli.list = true,
+            // Value flags
+            "-n" | "--random" => {
+                let val = take_value(&args, &mut i, "-n")?;
+                cli.random_count = Some(
+                    val.parse::<usize>()
+                        .map_err(|_| anyhow::anyhow!("--random requires a number, got: {}", val))?,
+                );
+            }
+            "-i" | "--input" => {
+                cli.input = Some(PathBuf::from(take_value(&args, &mut i, "-i")?));
+            }
+            "-o" | "--output" => {
+                cli.output = Some(PathBuf::from(take_value(&args, &mut i, "-o")?));
+            }
+            "--keyfile" => {
+                cli.keyfile = Some(PathBuf::from(take_value(&args, &mut i, "--keyfile")?));
+            }
+            "--pubkey" => {
+                cli.pubkey = Some(PathBuf::from(take_value(&args, &mut i, "--pubkey")?));
+            }
+            "--privkey" => {
+                cli.privkey = Some(PathBuf::from(take_value(&args, &mut i, "--privkey")?));
+            }
+            "--buffer" => {
+                cli.buffer_mode = Some(take_value(&args, &mut i, "--buffer")?);
+            }
+            // Algorithm short flags (single char after -)
+            s if s.starts_with('-') && !s.starts_with("--") && s.len() == 2 => {
+                let code = s.chars().nth(1).unwrap();
+                if ALGO_CHARS.contains(&code) {
+                    count_algo(&mut cli, code);
+                } else {
+                    anyhow::bail!("Unknown flag: {}", s);
+                }
+            }
+            // Algorithm long flags
+            s if s.starts_with("--") => {
+                let name = &s[2..].to_lowercase();
+                if ALGO_LONG_NAMES.contains(&name.as_str()) {
+                    count_algo_long(&mut cli, name);
+                } else {
+                    anyhow::bail!("Unknown option: {}", s);
+                }
+            }
+            other => {
+                anyhow::bail!("Unexpected argument: {}", other);
+            }
+        }
+        i += 1;
+    }
+
+    Ok(cli)
 }
 
 /// Long flag name to Algorithm mapping
@@ -319,7 +480,7 @@ const LONG_FLAGS: &[(&str, Algorithm)] = &[
 /// Supports both individual flags (-A -S -C) and combined flags (-ASC)
 /// Long flags are matched case-insensitively
 fn parse_algorithms_in_order() -> Vec<Algorithm> {
-    let algo_set: HashSet<char> = ALGO_CHARS.into_iter().collect();
+    let algo_chars = &ALGO_CHARS;
     let mut algorithms = Vec::new();
 
     for arg in std::env::args() {
@@ -334,7 +495,7 @@ fn parse_algorithms_in_order() -> Vec<Algorithm> {
         // Handle short flags: both single (-A) and combined (-ASC)
         if arg.starts_with('-') && !arg.starts_with("--") {
             let chars: Vec<char> = arg[1..].chars().collect();
-            if chars.iter().all(|c| algo_set.contains(c)) {
+            if chars.iter().all(|c| algo_chars.contains(c)) {
                 algorithms.extend(chars.iter().filter_map(|&c| Algorithm::from_code(c)));
             }
         }
@@ -415,9 +576,10 @@ fn get_password(cli: &Cli) -> Result<Zeroizing<Vec<u8>>> {
     let password = rpassword::prompt_password(prompt).context("Failed to read password")?;
 
     if !cli.decrypt {
-        let confirm =
-            rpassword::prompt_password("Confirm password: ").context("Failed to read password")?;
-        if password != confirm {
+        let confirm = Zeroizing::new(
+            rpassword::prompt_password("Confirm password: ").context("Failed to read password")?,
+        );
+        if password != *confirm {
             anyhow::bail!("Passwords do not match");
         }
     }
@@ -469,24 +631,22 @@ fn load_private_key(path: &Path) -> Result<HybridPrivateKey> {
     HybridPrivateKey::from_json(&json).context("Failed to parse private key")
 }
 
-fn create_progress_bar(total: u64, msg: &str) -> ProgressBar {
-    let pb = ProgressBar::new(total);
-    // Nerdfont: 󰌆 = nf-md-lock, 󰌊 = nf-md-lock_open, 󰥔 = nf-md-clock
-    // Progress bar chars: ━ (filled), ╾ (current), ─ (empty)
-    let template = if msg.contains("Decrypt") {
-        "{spinner:.green} {msg:.bold.green} │{bar:40.green/dim}│ {pos}/{len} 󰥔 {elapsed}"
+// ===== Simple progress =====
+
+fn make_progress_cb(show: bool, label: &str) -> Box<dyn FnMut(usize, usize) + '_> {
+    if show {
+        Box::new(move |cur, total| {
+            eprint!("\r{} {}/{}  ", label, cur, total);
+        })
     } else {
-        "{spinner:.cyan} {msg:.bold.cyan} │{bar:40.cyan/dim}│ {pos}/{len} 󰥔 {elapsed}"
-    };
-    pb.set_style(
-        ProgressStyle::with_template(template)
-            .unwrap()
-            .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", "✓"])
-            .progress_chars("━╾─"),
-    );
-    pb.set_message(msg.to_string());
-    pb.enable_steady_tick(std::time::Duration::from_millis(80));
-    pb
+        Box::new(|_, _| {})
+    }
+}
+
+fn finish_progress(show: bool) {
+    if show {
+        eprintln!();
+    }
 }
 
 fn cmd_keygen(output: &Path, export_pubkey: Option<&Path>) -> Result<()> {
@@ -608,45 +768,25 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             if !cli.silent {
                 eprintln!("󰦝 Decrypting with protected header...");
             }
-            let pb = if show_progress {
-                Some(create_progress_bar(100, "󰌊 Decrypting"))
-            } else {
-                None
-            };
             let result = decrypt_protected_with_buffer_mode(
                 &input_data,
                 &password,
                 &private_key,
                 buffer_mode,
-                |cur, total| {
-                    if let Some(pb) = &pb {
-                        pb.set_length(total as u64);
-                        pb.set_position(cur as u64);
-                    }
-                },
+                make_progress_cb(show_progress, "󰌊 Decrypting"),
             )
             .context("Decryption failed")?;
-            if let Some(pb) = pb {
-                pb.finish();
-            }
+            finish_progress(show_progress);
             result
         } else {
-            let pb = if show_progress {
-                Some(create_progress_bar(100, "󰌊 Decrypting"))
-            } else {
-                None
-            };
-            let result =
-                decrypt_with_buffer_mode(&input_data, &password, buffer_mode, |cur, total| {
-                    if let Some(pb) = &pb {
-                        pb.set_length(total as u64);
-                        pb.set_position(cur as u64);
-                    }
-                })
-                .context("Decryption failed")?;
-            if let Some(pb) = pb {
-                pb.finish();
-            }
+            let result = decrypt_with_buffer_mode(
+                &input_data,
+                &password,
+                buffer_mode,
+                make_progress_cb(show_progress, "󰌊 Decrypting"),
+            )
+            .context("Decryption failed")?;
+            finish_progress(show_progress);
             result
         }
     } else {
@@ -725,54 +865,30 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
                     eprintln!("󰦝 Using protected header (hybrid X25519+ML-KEM encryption)");
                 }
             }
-            let pb = if show_progress {
-                Some(create_progress_bar(algo_count as u64, "󰌆 Encrypting"))
-            } else {
-                None
-            };
             let result = encrypt_protected_with_buffer_mode(
                 &input_data,
                 &password,
-                algorithms,
+                &algorithms,
                 &public_key,
                 cli.lock,
                 buffer_mode,
-                |cur, total| {
-                    if let Some(pb) = &pb {
-                        pb.set_length(total as u64);
-                        pb.set_position(cur as u64);
-                    }
-                },
+                make_progress_cb(show_progress, "󰌆 Encrypting"),
             )
             .context("Encryption failed")?;
-            if let Some(pb) = pb {
-                pb.finish();
-            }
+            finish_progress(show_progress);
             result
         } else if cli.lock {
             anyhow::bail!("--lock requires --pubkey for protected header encryption");
         } else {
-            let pb = if show_progress {
-                Some(create_progress_bar(algo_count as u64, "󰌆 Encrypting"))
-            } else {
-                None
-            };
             let result = encrypt_with_buffer_mode(
                 &input_data,
                 &password,
-                algorithms,
+                &algorithms,
                 buffer_mode,
-                |cur, total| {
-                    if let Some(pb) = &pb {
-                        pb.set_length(total as u64);
-                        pb.set_position(cur as u64);
-                    }
-                },
+                make_progress_cb(show_progress, "󰌆 Encrypting"),
             )
             .context("Encryption failed")?;
-            if let Some(pb) = pb {
-                pb.finish();
-            }
+            finish_progress(show_progress);
             result
         }
     };
@@ -795,7 +911,7 @@ fn main() -> Result<()> {
     init_thread_pool();
     let args: Vec<String> = std::env::args().collect();
     let expanded_args = expand_combined_flags(args);
-    let cli = Cli::parse_from(expanded_args);
+    let cli = parse_cli(expanded_args)?;
 
     match &cli.command {
         Some(Commands::Keygen {

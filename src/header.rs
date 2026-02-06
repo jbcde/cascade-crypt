@@ -144,10 +144,6 @@ impl Header {
         h.finalize().into()
     }
 
-    fn compute_hash(&self) -> String {
-        hex::encode(&self.compute_hash_bytes())
-    }
-
     #[must_use]
     pub fn serialize(&self) -> String {
         let ct_hash_hex = self
@@ -162,7 +158,7 @@ impl Header {
             hex::encode(&self.salt),
             self.argon2_str(),
             ct_hash_hex,
-            self.compute_hash()
+            hex::encode(&self.compute_hash_bytes())
         )
     }
 

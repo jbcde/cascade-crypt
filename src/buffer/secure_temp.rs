@@ -103,6 +103,14 @@ impl SecureTempFile {
         self.len().map(|l| l == 0)
     }
 
+    /// Securely wipe file contents (overwrite + truncate) without deleting.
+    /// Used to clear stale data from the inactive ping-pong file.
+    pub fn wipe(&mut self) -> io::Result<()> {
+        self.secure_overwrite()?;
+        self.file.set_len(0)?;
+        self.file.sync_all()
+    }
+
     /// Securely delete the file by overwriting with zeros, then 0xFF, then removing.
     /// Note: This consumes self. The Drop impl handles cleanup if this isn't called.
     pub fn secure_delete(mut self) -> io::Result<()> {
