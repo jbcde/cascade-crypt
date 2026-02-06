@@ -2,7 +2,7 @@
 
 Cascading binary encryption tool with user-controlled algorithm ordering. Encrypt files through multiple layers of encryption, applied in the order you specify.
 
-> **v0.5.0 Breaking Changes:** The `-k`/`--key` command-line password flag has been removed for security reasons (passwords were visible in `ps`, `/proc`, and shell history). Use `--keyfile` or the interactive prompt instead. The animated progress bar has also been replaced with a simple progress counter. These changes, along with the removal of two heavy dependencies, reduced the binary from 1.4 MB to 1.1 MB (580 KB compressed). See [CHANGELOG.md](CHANGELOG.md) for details.
+> **v0.5.0 Breaking Changes:** The `-k`/`--key` command-line password flag has been removed for security reasons (passwords were visible in `ps`, `/proc`, and shell history). Use `--keyfile` or the interactive prompt instead. The animated progress bar has also been replaced with a simple progress counter for bloat reasons. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## Features
 
