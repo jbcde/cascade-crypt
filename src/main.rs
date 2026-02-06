@@ -487,13 +487,27 @@ fn finish_progress(show: bool) {
     }
 }
 
+/// Write a key file with restricted permissions (mode 0600 on Unix).
+/// Private key material must not be world-readable.
+fn write_key_file(path: &Path, data: &str) -> Result<()> {
+    fs::write(path, data)
+        .with_context(|| format!("Failed to write key file: {:?}", path))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("Failed to set permissions on {:?}", path))?;
+    }
+    Ok(())
+}
+
 fn cmd_keygen(output: &Path, export_pubkey: Option<&Path>) -> Result<()> {
     eprintln!("󰌆 Generating hybrid X25519 + ML-KEM-1024 keypair...");
 
     let keypair = HybridKeypair::generate();
     let json = keypair.to_json().context("Failed to serialize keypair")?;
 
-    fs::write(output, &json).with_context(|| format!("Failed to write keypair to {:?}", output))?;
+    write_key_file(output, &json)?;
     eprintln!("✓ Keypair saved to: {:?}", output);
 
     // Optionally export public key
@@ -502,8 +516,7 @@ fn cmd_keygen(output: &Path, export_pubkey: Option<&Path>) -> Result<()> {
             .public
             .to_json()
             .context("Failed to serialize public key")?;
-        fs::write(pubkey_path, &pubkey_json)
-            .with_context(|| format!("Failed to write public key to {:?}", pubkey_path))?;
+        write_key_file(pubkey_path, &pubkey_json)?;
         eprintln!("✓ Public key exported to: {:?}", pubkey_path);
     }
 
@@ -526,8 +539,7 @@ fn cmd_export_pubkey(input: &Path, output: &Path) -> Result<()> {
         .to_json()
         .context("Failed to serialize public key")?;
 
-    fs::write(output, &pubkey_json)
-        .with_context(|| format!("Failed to write public key to {:?}", output))?;
+    write_key_file(output, &pubkey_json)?;
 
     eprintln!("✓ Public key exported to: {:?}", output);
     Ok(())

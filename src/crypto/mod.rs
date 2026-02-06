@@ -313,7 +313,15 @@ macro_rules! aead_impl {
     }};
 }
 
-// Macro for cipher 0.5 block ciphers with manual CBC mode
+// Macro for cipher 0.5 block ciphers with manual CBC mode.
+//
+// These ciphers (Threefish, RC6, Magma, Speck, GIFT) use the cipher 0.5 trait
+// ecosystem, but our Cargo.toml declares `cipher = "0.4"` for the `cbc` crate.
+// Cargo allows both versions to coexist, but we can't import cipher 0.5 traits
+// directly since the `cipher` dependency resolves to 0.4. Instead, we access
+// the cipher 0.5 traits through `magma`'s public re-export. If `magma` ever
+// changes its re-exports, this import path will need updating for all cipher 0.5
+// ciphers simultaneously.
 macro_rules! cipher05_cbc_impl {
     ($cipher:ty, $key_len:expr, $block_size:expr) => {{
         use magma::cipher::{BlockCipherDecrypt, BlockCipherEncrypt, KeyInit};

@@ -60,6 +60,8 @@ pub enum HeaderError {
     Base64Error,
     #[error("JSON error: {0}")]
     JsonError(String),
+    #[error("Argon2 parameters out of range")]
+    Argon2ParamsOutOfRange,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -339,16 +341,26 @@ fn parse_hash(s: &str) -> Result<[u8; 32], HeaderError> {
     bytes.try_into().map_err(|_| HeaderError::InvalidFormat)
 }
 
+// Argon2 parameter bounds to prevent denial-of-service from crafted headers.
+// These are generous upper limits well beyond any reasonable configuration.
+const MAX_ARGON2_M_COST: u32 = 4_194_304; // 4 GiB (in KiB)
+const MAX_ARGON2_T_COST: u32 = 100;       // iterations
+const MAX_ARGON2_P_COST: u32 = 255;       // parallel lanes
+
 fn parse_argon2(s: &str) -> Result<Argon2Params, HeaderError> {
     let parts: Vec<&str> = s.split(',').collect();
     if parts.len() != 3 {
         return Err(HeaderError::InvalidFormat);
     }
-    Ok(Argon2Params {
-        m_cost: parts[0].parse().map_err(|_| HeaderError::InvalidFormat)?,
-        t_cost: parts[1].parse().map_err(|_| HeaderError::InvalidFormat)?,
-        p_cost: parts[2].parse().map_err(|_| HeaderError::InvalidFormat)?,
-    })
+    let m_cost: u32 = parts[0].parse().map_err(|_| HeaderError::InvalidFormat)?;
+    let t_cost: u32 = parts[1].parse().map_err(|_| HeaderError::InvalidFormat)?;
+    let p_cost: u32 = parts[2].parse().map_err(|_| HeaderError::InvalidFormat)?;
+    if m_cost > MAX_ARGON2_M_COST || t_cost > MAX_ARGON2_T_COST || p_cost > MAX_ARGON2_P_COST
+        || m_cost == 0 || t_cost == 0 || p_cost == 0
+    {
+        return Err(HeaderError::Argon2ParamsOutOfRange);
+    }
+    Ok(Argon2Params { m_cost, t_cost, p_cost })
 }
 
 /// Minimal hex encoding/decoding to avoid external dependency.

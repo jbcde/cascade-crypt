@@ -25,6 +25,12 @@ pub enum BufferMode {
     /// Force RAM-only buffering (may fail on large files).
     Ram,
     /// Force disk buffering from the start.
+    ///
+    /// Note: Each layer operation still reads the full data into memory for
+    /// processing (cipher APIs require contiguous input). Disk mode bounds peak
+    /// memory to ~2x the data size (input + output of one layer) rather than
+    /// accumulating all layers in RAM. It does not provide constant-memory
+    /// streaming.
     Disk,
     /// Automatically switch from RAM to disk when memory pressure is detected.
     #[default]
@@ -114,7 +120,13 @@ fn get_available_memory() -> Option<usize> {
 /// Buffer for layer-by-layer encryption/decryption data.
 ///
 /// Supports both RAM and disk modes. In disk mode, uses two temp files
-/// in a ping-pong pattern (A→B→A→B...) to avoid memory pressure.
+/// in a ping-pong pattern (A→B→A→B...) to reduce memory pressure.
+///
+/// **Memory behavior:** Disk mode reads the full data into memory for each
+/// layer operation (cipher APIs require contiguous `&[u8]` input), so peak
+/// memory is ~2x the data size. The benefit over RAM mode is that only one
+/// layer's input and output coexist in memory at a time, and stale copies
+/// are securely wiped between layers.
 pub enum LayerBuffer {
     /// Data stored in RAM with automatic zeroization.
     Ram(Zeroizing<Vec<u8>>),
