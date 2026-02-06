@@ -4,10 +4,10 @@
 
 ```bash
 # Encrypt a file with AES + Serpent + ChaCha20
-cascrypt -ASC -i input.bin -o output.enc -k "password"
+cascrypt -ASC -i input.bin -o output.enc
 
 # Decrypt
-cascrypt -d -i output.enc -o decrypted.bin -k "password"
+cascrypt -d -i output.enc -o decrypted.bin
 ```
 
 ## Command Line Reference
@@ -18,13 +18,12 @@ cascrypt [OPTIONS] [COMMAND]
 COMMANDS:
     keygen          Generate hybrid X25519+ML-KEM keypair
     export-pubkey   Export public key from keypair file
-    help            Print help information
 
 OPTIONS:
     -d, --decrypt               Decrypt mode (default is encrypt)
     -n, --random <COUNT>        Use N randomly selected algorithms
     -s, --silent                Suppress all status output
-        --progress              Show progress bar during encryption/decryption
+        --progress              Show progress during encryption/decryption
         --lock                  Engage puzzle lock (requires --pubkey)
 
     -A, --aes                   AES-256-GCM [code: A]
@@ -50,7 +49,6 @@ OPTIONS:
 
     -i, --input <FILE>          Input file (use '-' for stdin)
     -o, --output <FILE>         Output file (use '-' for stdout)
-    -k, --key <KEY>             Passphrase (prompts if omitted)
         --keyfile <FILE>        Read key from file
         --pubkey <FILE>         Public key for header protection
         --privkey <FILE>        Private key for protected headers
@@ -113,10 +111,7 @@ Decryption is automatic - the algorithm order is stored in the file header:
 # Basic decryption
 cascrypt -d -i encrypted.enc -o decrypted.bin
 
-# With password on command line
-cascrypt -d -i encrypted.enc -o decrypted.bin -k "password"
-
-# From keyfile
+# With keyfile
 cascrypt -d -i encrypted.enc -o decrypted.bin --keyfile secret.key
 ```
 
@@ -126,12 +121,12 @@ Use `-s` to suppress all status output:
 
 ```bash
 # Normal output
-cascrypt -n 5 -i file.bin -o file.enc -k "pass"
+cascrypt -n 5 -i file.bin -o file.enc
 # Output: Encrypting with: AES-256-GCM -> Serpent-256-CBC -> ...
 #         Encryption complete.
 
 # Silent output
-cascrypt -s -n 5 -i file.bin -o file.enc -k "pass"
+cascrypt -s -n 5 -i file.bin -o file.enc
 # Output: (nothing)
 ```
 
@@ -151,28 +146,26 @@ Silent mode prevents shoulder-surfing and log capture of algorithm order:
 cascrypt -s -n 50 --pubkey recipient.pub -i secret.bin -o secret.enc
 ```
 
-## Progress Bar
+## Progress Indicator
 
-Use `--progress` to display a progress bar during long encryption/decryption operations:
+Use `--progress` to display a progress counter during long encryption/decryption operations:
 
 ```bash
-# Encrypt with progress bar
-cascrypt --progress -n 100 -i file.bin -o file.enc -k "pass"
-# Output: Encrypting with 100 algorithms
-#         Encrypting [########################################] 100/100 (0s)
+# Encrypt with progress
+cascrypt --progress -n 100 -i file.bin -o file.enc
+# Output: Encrypting 1/100
+#         Encrypting 2/100
+#         ...
 #         Encryption complete.
 
-# Decrypt with progress bar
-cascrypt --progress -d -i file.enc -o file.dec -k "pass"
+# Decrypt with progress
+cascrypt --progress -d -i file.enc -o file.dec
 ```
 
-The progress bar:
-- Shows current layer and total layers
-- Displays estimated time remaining
+The progress indicator:
+- Shows current layer and total layers on stderr
 - Is disabled by default (opt-in with `--progress`)
 - Is suppressed in silent mode (`-s` overrides `--progress`)
-
-Useful for operations with many algorithm layers where you want visual feedback.
 
 ## Protected Headers (Hybrid Encryption)
 
@@ -228,7 +221,7 @@ The `--lock` flag engages an optional puzzle lock on the encrypted output.
 cascrypt -A -S -C --pubkey recipient.pub --lock -i secret.bin -o secret.enc
 
 # Decrypt (requires private key)
-cascrypt -d --privkey my.keypair -i secret.enc -o secret.bin -k "password"
+cascrypt -d --privkey my.keypair -i secret.enc -o secret.bin
 ```
 
 The puzzle lock:
@@ -243,21 +236,13 @@ The puzzle lock:
 
 ### Interactive Prompt
 
-If no key is provided, you'll be prompted:
+If no keyfile is provided, you'll be prompted (input is hidden):
 
 ```bash
 cascrypt -A -i file.bin -o file.enc
 # Enter encryption password:
 # Confirm password:
 ```
-
-### Command Line
-
-```bash
-cascrypt -A -i file.bin -o file.enc -k "my password"
-```
-
-Note: Password visible in shell history and process list.
 
 ### Keyfile
 
@@ -276,13 +261,13 @@ Use `-` for stdin or stdout:
 
 ```bash
 # Encrypt from stdin
-cat secret.txt | cascrypt -A -S -i - -o encrypted.bin -k "pass"
+cat secret.txt | cascrypt -A -S -i - -o encrypted.bin --keyfile secret.key
 
 # Decrypt to stdout
-cascrypt -d -i encrypted.bin -o - -k "pass" > decrypted.txt
+cascrypt -d -i encrypted.bin -o - --keyfile secret.key > decrypted.txt
 
 # Both (pipe through)
-cat secret.txt | cascrypt -A -i - -o - -k "pass" | base64
+cat secret.txt | cascrypt -A -i - -o - --keyfile secret.key | base64
 ```
 
 ## Algorithm Reference
@@ -346,7 +331,7 @@ cascrypt -n 5 -i file.bin -o file.enc
 # Heavy random (50 layers)
 cascrypt -n 50 -i file.bin -o file.enc
 
-# Extreme (500 layers) with progress bar
+# Extreme (500 layers) with progress
 cascrypt --progress -n 500 -i file.bin -o file.enc
 ```
 
@@ -358,17 +343,17 @@ cascrypt keygen -o alice.keypair --export-pubkey alice.pub
 cascrypt keygen -o bob.keypair --export-pubkey bob.pub
 
 # Alice encrypts for Bob (silent, random, protected)
-cascrypt -s -n 30 --pubkey bob.pub -i message.txt -o message.enc -k "shared-secret"
+cascrypt -s -n 30 --pubkey bob.pub -i message.txt -o message.enc --keyfile shared.key
 
 # Bob decrypts
-cascrypt -s -d --privkey bob.keypair -i message.enc -o message.txt -k "shared-secret"
+cascrypt -s -d --privkey bob.keypair -i message.enc -o message.txt --keyfile shared.key
 ```
 
 ### Scripting
 
 ```bash
 # Silent mode for scripts (check exit code)
-if cascrypt -s -A -i file.bin -o file.enc -k "$PASSWORD"; then
+if cascrypt -s -A -i file.bin -o file.enc --keyfile "$KEYFILE"; then
     echo "Encryption succeeded"
 else
     echo "Encryption failed"
@@ -376,7 +361,7 @@ fi
 
 # Process multiple files
 for f in *.txt; do
-    cascrypt -s -n 10 -i "$f" -o "${f}.enc" -k "$PASSWORD"
+    cascrypt -s -n 10 -i "$f" -o "${f}.enc" --keyfile "$KEYFILE"
 done
 ```
 
@@ -385,8 +370,7 @@ done
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Runtime error (encryption/decryption failure, missing files, etc.) |
-| 2 | Argument error (invalid flags, missing required options) |
+| 1 | Error (invalid arguments, encryption/decryption failure, missing files, etc.) |
 
 ## File Format
 

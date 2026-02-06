@@ -2,6 +2,8 @@
 
 Cascading binary encryption tool with user-controlled algorithm ordering. Encrypt files through multiple layers of encryption, applied in the order you specify.
 
+> **v0.5.0 Breaking Changes:** The `-k`/`--key` command-line password flag has been removed for security reasons (passwords were visible in `ps`, `/proc`, and shell history). Use `--keyfile` or the interactive prompt instead. The animated progress bar has also been replaced with a simple progress counter. These changes, along with the removal of two heavy dependencies, reduced the binary from 1.4 MB to 1.1 MB (580 KB compressed). See [CHANGELOG.md](CHANGELOG.md) for details.
+
 ## Features
 
 - **20 symmetric ciphers** - mix and match in any order
@@ -9,7 +11,7 @@ Cascading binary encryption tool with user-controlled algorithm ordering. Encryp
 - **Combined flags** - use `-ASC` instead of `-A -S -C` for convenience
 - **Random mode** - randomly select N algorithms (with duplicates) for unpredictable layering
 - **Silent mode** - suppress all output for operational security
-- **Progress bar** - optional visual feedback for long operations (`--progress`)
+- **Progress indicator** - optional progress display for long operations (`--progress`)
 - **Auto-decryption** - header stores algorithm order, decryption reverses automatically
 - **Argon2id key derivation** - unique keys derived per algorithm layer
 - **SHA-256 integrity** - header hash detects tampering
@@ -26,25 +28,25 @@ cargo build --release
 
 ### Encrypt (manual algorithm selection)
 ```bash
-cascrypt -ASC -i secret.bin -o secret.enc -k "password"
+cascrypt -ASC -i secret.bin -o secret.enc
 ```
-Encrypts with AES-256 → Serpent → ChaCha20 (in that order). Flags can be combined (`-ASC`) or separate (`-A -S -C`).
+Encrypts with AES-256 → Serpent → ChaCha20 (in that order). Flags can be combined (`-ASC`) or separate (`-A -S -C`). You will be prompted for a password interactively.
 
 ### Encrypt (random algorithm selection)
 ```bash
-cascrypt -n 20 -i secret.bin -o secret.enc -k "password"
+cascrypt -n 20 -i secret.bin -o secret.enc
 ```
 Encrypts with 20 randomly selected algorithms (duplicates allowed).
 
 ### Decrypt
 ```bash
-cascrypt -d -i secret.enc -o secret.bin -k "password"
+cascrypt -d -i secret.enc -o secret.bin
 ```
-Algorithm order is read from the file header automatically.
+Algorithm order is read from the file header automatically. Password is prompted interactively.
 
 ### Silent mode
 ```bash
-cascrypt -s -n 50 -i secret.bin -o secret.enc -k "password"
+cascrypt -s -n 50 -i secret.bin -o secret.enc
 ```
 Suppresses all status output (algorithm chain, completion messages).
 
@@ -53,10 +55,9 @@ Suppresses all status output (algorithm chain, completion messages).
 -d, --decrypt       Decrypt mode
 -n, --random N      Use N randomly selected algorithms (disables manual flags)
 -s, --silent        Suppress all status output
-    --progress      Show progress bar for long operations
+    --progress      Show progress during encryption/decryption
 -i, --input FILE    Input file (use '-' for stdin)
 -o, --output FILE   Output file (use '-' for stdout)
--k, --key KEY       Passphrase (prompts if omitted)
     --keyfile FILE  Read key from file
     --pubkey FILE   Recipient's public key for header protection (encrypt)
     --privkey FILE  Private key for protected headers (decrypt)
@@ -118,12 +119,12 @@ The keypair combines:
 Encrypt with a protected header using the recipient's public key:
 
 ```bash
-cascrypt -ASC -i secret.bin -o secret.enc -k "password" --pubkey recipient.pubkey
+cascrypt -ASC -i secret.bin -o secret.enc --pubkey recipient.pubkey
 ```
 
 The algorithm order and salt are now encrypted. An attacker sees only:
 ```
-[CCRYPT|2|E|<encrypted_keys>|<encrypted_metadata>|<hash>]
+[CCRYPT|8|E|<encrypted_keys>|<encrypted_metadata>|<ciphertext_hash>|<header_hash>]
 ```
 
 ### Protected Decryption
@@ -131,7 +132,7 @@ The algorithm order and salt are now encrypted. An attacker sees only:
 Decrypt using your private key (full keypair file):
 
 ```bash
-cascrypt -d -i secret.enc -o secret.bin -k "password" --privkey my.keypair
+cascrypt -d -i secret.enc -o secret.bin --privkey my.keypair
 ```
 
 Without the private key, decryption fails:
@@ -164,7 +165,7 @@ The puzzle lock:
 <encrypted payload>
 ```
 
-- **Version**: 1
+- **Version**: 7
 - **Algorithm codes**: Letters indicating encryption order (visible)
 - **Salt**: 32-byte random salt (hex encoded)
 - **SHA-256**: Hash of algorithm codes + salt
@@ -190,14 +191,14 @@ cascrypt -ATWSCXMBFIR4KE36GPJN -i file.bin -o fortress.enc
 # Quick and modern
 cascrypt -CA -i file.bin -o file.enc
 
-# Random 100-layer encryption with progress bar
+# Random 100-layer encryption with progress
 cascrypt --progress -n 100 -i file.bin -o file.enc
 
 # Silent random encryption with protected header (maximum OPSEC)
 cascrypt -s -n 50 --pubkey recipient.pubkey -i secret.bin -o secret.enc
 
 # Pipe from stdin
-cat secret.txt | cascrypt -AS -i - -o - -k "pass" > encrypted.bin
+cat secret.txt | cascrypt -AS -i - -o - --keyfile secret.key > encrypted.bin
 
 # Protected header workflow
 cascrypt keygen -o alice.keypair --export-pubkey alice.pubkey
@@ -205,7 +206,7 @@ cascrypt -ACS -i secret.bin -o secret.enc --pubkey alice.pubkey
 cascrypt -d -i secret.enc -o secret.bin --privkey alice.keypair
 
 # Silent decryption
-cascrypt -s -d -i secret.enc -o secret.bin -k "password"
+cascrypt -s -d -i secret.enc -o secret.bin
 ```
 
 ## Security Notes
