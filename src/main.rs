@@ -26,29 +26,6 @@ const ALGO_CHARS: [char; 20] = [
     'N',
 ];
 
-/// Algorithm long flag names (lowercase, without --) for case-insensitive matching
-const ALGO_LONG_NAMES: &[&str] = &[
-    "aes",
-    "3des",
-    "twofish",
-    "serpent",
-    "chacha",
-    "xchacha",
-    "camellia",
-    "blowfish",
-    "cast5",
-    "idea",
-    "aria",
-    "sm4",
-    "kuznyechik",
-    "seed",
-    "threefish",
-    "rc6",
-    "magma",
-    "speck",
-    "gift",
-    "ascon",
-];
 
 /// Expand combined short flags like -ABC into -A -B -C
 /// Also normalizes algorithm long flags to lowercase for case-insensitive matching
@@ -60,7 +37,7 @@ fn expand_combined_flags(args: Vec<String>) -> Vec<String> {
         // Normalize algorithm long flags to lowercase (e.g., --AES -> --aes)
         if arg.starts_with("--") {
             let lower = arg.to_lowercase();
-            if ALGO_LONG_NAMES.contains(&&lower[2..]) {
+            if LONG_FLAGS.iter().any(|(f, _)| *f == lower) {
                 result.push(lower);
                 continue;
             }
@@ -123,26 +100,7 @@ struct Cli {
     lock: bool,
     list: bool,
     buffer_mode: Option<String>,
-    aes: u8,
-    triple_des: u8,
-    twofish: u8,
-    serpent: u8,
-    chacha: u8,
-    xchacha: u8,
-    camellia: u8,
-    blowfish: u8,
-    cast5: u8,
-    idea: u8,
-    aria: u8,
-    sm4: u8,
-    kuznyechik: u8,
-    seed: u8,
-    threefish: u8,
-    rc6: u8,
-    magma: u8,
-    speck: u8,
-    gift: u8,
-    ascon: u8,
+    algorithms: Vec<Algorithm>,
     input: Option<PathBuf>,
     output: Option<PathBuf>,
     keyfile: Option<PathBuf>,
@@ -240,59 +198,6 @@ fn take_value(args: &[String], i: &mut usize, flag: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("{} requires a value", flag))
 }
 
-/// Increment the counter for an algorithm short flag.
-fn count_algo(cli: &mut Cli, code: char) {
-    match code {
-        'A' => cli.aes = cli.aes.saturating_add(1),
-        'T' => cli.triple_des = cli.triple_des.saturating_add(1),
-        'W' => cli.twofish = cli.twofish.saturating_add(1),
-        'S' => cli.serpent = cli.serpent.saturating_add(1),
-        'C' => cli.chacha = cli.chacha.saturating_add(1),
-        'X' => cli.xchacha = cli.xchacha.saturating_add(1),
-        'M' => cli.camellia = cli.camellia.saturating_add(1),
-        'B' => cli.blowfish = cli.blowfish.saturating_add(1),
-        'F' => cli.cast5 = cli.cast5.saturating_add(1),
-        'I' => cli.idea = cli.idea.saturating_add(1),
-        'R' => cli.aria = cli.aria.saturating_add(1),
-        '4' => cli.sm4 = cli.sm4.saturating_add(1),
-        'K' => cli.kuznyechik = cli.kuznyechik.saturating_add(1),
-        'E' => cli.seed = cli.seed.saturating_add(1),
-        '3' => cli.threefish = cli.threefish.saturating_add(1),
-        '6' => cli.rc6 = cli.rc6.saturating_add(1),
-        'G' => cli.magma = cli.magma.saturating_add(1),
-        'P' => cli.speck = cli.speck.saturating_add(1),
-        'J' => cli.gift = cli.gift.saturating_add(1),
-        'N' => cli.ascon = cli.ascon.saturating_add(1),
-        _ => {}
-    }
-}
-
-/// Increment the counter for an algorithm long flag.
-fn count_algo_long(cli: &mut Cli, name: &str) {
-    match name {
-        "aes" => cli.aes = cli.aes.saturating_add(1),
-        "3des" => cli.triple_des = cli.triple_des.saturating_add(1),
-        "twofish" => cli.twofish = cli.twofish.saturating_add(1),
-        "serpent" => cli.serpent = cli.serpent.saturating_add(1),
-        "chacha" => cli.chacha = cli.chacha.saturating_add(1),
-        "xchacha" => cli.xchacha = cli.xchacha.saturating_add(1),
-        "camellia" => cli.camellia = cli.camellia.saturating_add(1),
-        "blowfish" => cli.blowfish = cli.blowfish.saturating_add(1),
-        "cast5" => cli.cast5 = cli.cast5.saturating_add(1),
-        "idea" => cli.idea = cli.idea.saturating_add(1),
-        "aria" => cli.aria = cli.aria.saturating_add(1),
-        "sm4" => cli.sm4 = cli.sm4.saturating_add(1),
-        "kuznyechik" => cli.kuznyechik = cli.kuznyechik.saturating_add(1),
-        "seed" => cli.seed = cli.seed.saturating_add(1),
-        "threefish" => cli.threefish = cli.threefish.saturating_add(1),
-        "rc6" => cli.rc6 = cli.rc6.saturating_add(1),
-        "magma" => cli.magma = cli.magma.saturating_add(1),
-        "speck" => cli.speck = cli.speck.saturating_add(1),
-        "gift" => cli.gift = cli.gift.saturating_add(1),
-        "ascon" => cli.ascon = cli.ascon.saturating_add(1),
-        _ => {}
-    }
-}
 
 fn parse_keygen(args: &[String], start: usize) -> Result<Commands> {
     let mut output: Option<PathBuf> = None;
@@ -342,26 +247,7 @@ fn parse_cli(args: Vec<String>) -> Result<Cli> {
         lock: false,
         list: false,
         buffer_mode: None,
-        aes: 0,
-        triple_des: 0,
-        twofish: 0,
-        serpent: 0,
-        chacha: 0,
-        xchacha: 0,
-        camellia: 0,
-        blowfish: 0,
-        cast5: 0,
-        idea: 0,
-        aria: 0,
-        sm4: 0,
-        kuznyechik: 0,
-        seed: 0,
-        threefish: 0,
-        rc6: 0,
-        magma: 0,
-        speck: 0,
-        gift: 0,
-        ascon: 0,
+        algorithms: Vec::new(),
         input: None,
         output: None,
         keyfile: None,
@@ -427,17 +313,17 @@ fn parse_cli(args: Vec<String>) -> Result<Cli> {
             // Algorithm short flags (single char after -)
             s if s.starts_with('-') && !s.starts_with("--") && s.len() == 2 => {
                 let code = s.chars().nth(1).unwrap();
-                if ALGO_CHARS.contains(&code) {
-                    count_algo(&mut cli, code);
+                if let Some(algo) = Algorithm::from_code(code) {
+                    cli.algorithms.push(algo);
                 } else {
                     anyhow::bail!("Unknown flag: {}", s);
                 }
             }
             // Algorithm long flags
             s if s.starts_with("--") => {
-                let name = &s[2..].to_lowercase();
-                if ALGO_LONG_NAMES.contains(&name.as_str()) {
-                    count_algo_long(&mut cli, name);
+                let name = s[2..].to_lowercase();
+                if let Some(&(_, algo)) = LONG_FLAGS.iter().find(|(f, _)| f[2..] == *name) {
+                    cli.algorithms.push(algo);
                 } else {
                     anyhow::bail!("Unknown option: {}", s);
                 }
@@ -476,33 +362,6 @@ const LONG_FLAGS: &[(&str, Algorithm)] = &[
     ("--ascon", Algorithm::Ascon128),
 ];
 
-/// Parse algorithm flags in the order they appear in argv
-/// Supports both individual flags (-A -S -C) and combined flags (-ASC)
-/// Long flags are matched case-insensitively
-fn parse_algorithms_in_order() -> Vec<Algorithm> {
-    let algo_chars = &ALGO_CHARS;
-    let mut algorithms = Vec::new();
-
-    for arg in std::env::args() {
-        // Check long flags first (case-insensitive)
-        if arg.starts_with("--") {
-            let lower = arg.to_lowercase();
-            if let Some(&(_, algo)) = LONG_FLAGS.iter().find(|(flag, _)| *flag == lower) {
-                algorithms.push(algo);
-                continue;
-            }
-        }
-        // Handle short flags: both single (-A) and combined (-ASC)
-        if arg.starts_with('-') && !arg.starts_with("--") {
-            let chars: Vec<char> = arg[1..].chars().collect();
-            if chars.iter().all(|c| algo_chars.contains(c)) {
-                algorithms.extend(chars.iter().filter_map(|&c| Algorithm::from_code(c)));
-            }
-        }
-    }
-
-    algorithms
-}
 
 /// Generate N randomly selected algorithms (with duplicates allowed)
 fn generate_random_algorithms(count: usize) -> Vec<Algorithm> {
@@ -535,29 +394,6 @@ fn is_64bit_block(algo: Algorithm) -> bool {
     )
 }
 
-/// Check if any individual algorithm flags were specified
-fn has_algorithm_flags(cli: &Cli) -> bool {
-    cli.aes > 0
-        || cli.triple_des > 0
-        || cli.twofish > 0
-        || cli.serpent > 0
-        || cli.chacha > 0
-        || cli.xchacha > 0
-        || cli.camellia > 0
-        || cli.blowfish > 0
-        || cli.cast5 > 0
-        || cli.idea > 0
-        || cli.aria > 0
-        || cli.sm4 > 0
-        || cli.kuznyechik > 0
-        || cli.seed > 0
-        || cli.threefish > 0
-        || cli.rc6 > 0
-        || cli.magma > 0
-        || cli.speck > 0
-        || cli.gift > 0
-        || cli.ascon > 0
-}
 
 fn get_password(cli: &Cli) -> Result<Zeroizing<Vec<u8>>> {
     // Priority: keyfile > interactive prompt
@@ -573,18 +409,20 @@ fn get_password(cli: &Cli) -> Result<Zeroizing<Vec<u8>>> {
         "Enter encryption password: "
     };
 
-    let password = rpassword::prompt_password(prompt).context("Failed to read password")?;
+    let password = Zeroizing::new(
+        rpassword::prompt_password(prompt).context("Failed to read password")?
+    );
 
     if !cli.decrypt {
         let confirm = Zeroizing::new(
             rpassword::prompt_password("Confirm password: ").context("Failed to read password")?,
         );
-        if password != *confirm {
+        if *password != *confirm {
             anyhow::bail!("Passwords do not match");
         }
     }
 
-    Ok(Zeroizing::new(password.into_bytes()))
+    Ok(Zeroizing::new(password.as_bytes().to_vec()))
 }
 
 fn read_input(path: &Path) -> Result<Zeroizing<Vec<u8>>> {
@@ -793,7 +631,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
         // Encrypt mode - get algorithms
         let algorithms = if let Some(count) = cli.random_count {
             // Random mode - check for conflicting flags
-            if has_algorithm_flags(&cli) {
+            if !cli.algorithms.is_empty() {
                 anyhow::bail!(
                     "Cannot use -n/--random with individual algorithm flags.\n\
                     Use either -n <count> OR specific algorithm flags, not both."
@@ -803,22 +641,19 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
                 anyhow::bail!("Random count must be at least 1");
             }
             generate_random_algorithms(count)
+        } else if cli.algorithms.is_empty() {
+            anyhow::bail!(
+                "No encryption algorithms specified.\n\
+                Use at least one of:\n\
+                  -A (AES-256)      -T (3DES)         -W (Twofish)      -S (Serpent)\n\
+                  -C (ChaCha20)     -X (XChaCha20)    -M (Camellia)     -B (Blowfish)\n\
+                  -F (CAST5)        -I (IDEA)         -R (ARIA)         -4 (SM4)\n\
+                  -K (Kuznyechik)   -E (SEED)         -3 (Threefish)    -6 (RC6)\n\
+                  -G (Magma)        -P (Speck)        -J (GIFT)         -N (Ascon)\n\
+                Or use -n <count> for random algorithm selection."
+            );
         } else {
-            // Manual mode - parse algorithms from command line
-            let algos = parse_algorithms_in_order();
-            if algos.is_empty() {
-                anyhow::bail!(
-                    "No encryption algorithms specified.\n\
-                    Use at least one of:\n\
-                      -A (AES-256)      -T (3DES)         -W (Twofish)      -S (Serpent)\n\
-                      -C (ChaCha20)     -X (XChaCha20)    -M (Camellia)     -B (Blowfish)\n\
-                      -F (CAST5)        -I (IDEA)         -R (ARIA)         -4 (SM4)\n\
-                      -K (Kuznyechik)   -E (SEED)         -3 (Threefish)    -6 (RC6)\n\
-                      -G (Magma)        -P (Speck)        -J (GIFT)         -N (Ascon)\n\
-                    Or use -n <count> for random algorithm selection."
-                );
-            }
-            algos
+            cli.algorithms
         };
 
         let algo_count = algorithms.len();

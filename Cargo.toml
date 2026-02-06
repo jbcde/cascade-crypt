@@ -1,6 +1,6 @@
 [package]
 name = "cascrypt"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "Cascading binary encryption with user-controlled algorithm ordering"
 license = "MIT"
@@ -22,15 +22,16 @@ kuznyechik = "0.8"
 # New ciphers (cipher 0.4 compatible)
 kisaseed = "0.1"
 
-# Threefish (cipher 0.5)
-threefish = "0.6.0-rc.0"
-
-# New ciphers (cipher 0.5 - need custom implementations)
-rc6 = "0.1.0-rc.2"
-magma = "0.10.0-rc.2"
-speck-cipher = "0.1.0-rc.2"
-gift-cipher = "0.1.0-rc.2"
-ascon-aead = "0.6.0-pre.2"
+# Pre-release ciphers (cipher 0.5 trait ecosystem).
+# No stable releases exist for these crates. Newer pre-release versions
+# (e.g. rc6 0.1.0-rc.3) require cipher internals removed in cipher 0.5.0
+# stable, so these are pinned exactly to the last compatible set.
+threefish = "=0.6.0-rc.0"
+rc6 = "=0.1.0-rc.2"
+magma = "=0.10.0-rc.2"
+speck-cipher = "=0.1.0-rc.2"
+gift-cipher = "=0.1.0-rc.2"
+ascon-aead = "=0.6.0-pre.2"
 
 # Encryption - Stream ciphers
 chacha20poly1305 = "0.10"

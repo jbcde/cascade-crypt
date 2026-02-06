@@ -4,6 +4,22 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1] - 2026-02-06
+
+### Security
+- **Fixed:** Password string in `get_password()` now wrapped in `Zeroizing` immediately, ensuring zeroization on error paths (e.g. password mismatch)
+- **Fixed:** `Header::parse()` panic on malformed input with missing fields (e.g. `[CCRYPT]\n`) — now returns `InvalidMagic` error
+
+### Changed
+- Unified algorithm parsing into a single pass (was two independent code paths that could silently diverge)
+- Removed all `MaybeUninit`/`unsafe` usage for random byte generation — replaced with zero-initialized arrays
+- Pre-release cipher crate versions pinned with exact (`=`) versions to prevent incompatible upgrades
+- Added explanatory comment in `Cargo.toml` about cipher 0.5 ecosystem constraints
+
+### Added
+- Fuzz targets for `Header::parse`, `Header::parse_encrypted`, `encoder::decode`, and `crypto::decrypt` (requires nightly: `cargo +nightly fuzz run <target>`)
+- Limitations section in README documenting 4 GiB file size cap and memory requirements
+
 ## [0.5.0] - 2026-02-05
 
 ### Security

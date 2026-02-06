@@ -1,5 +1,3 @@
-use std::mem::MaybeUninit;
-
 use argon2::Argon2;
 use rand::RngCore;
 use rayon::prelude::*;
@@ -195,11 +193,8 @@ where
     if algorithms.is_empty() {
         return Err(CascadeError::NoAlgorithms);
     }
-    let salt = {
-        let mut buf = MaybeUninit::<[u8; 32]>::uninit();
-        rand::thread_rng().fill_bytes(unsafe { &mut *buf.as_mut_ptr() });
-        unsafe { buf.assume_init() }
-    };
+    let mut salt = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut salt);
     let encrypted = encrypt_layers(
         data,
         password,
@@ -273,11 +268,8 @@ where
     if algorithms.is_empty() {
         return Err(CascadeError::NoAlgorithms);
     }
-    let salt = {
-        let mut buf = MaybeUninit::<[u8; 32]>::uninit();
-        rand::thread_rng().fill_bytes(unsafe { &mut *buf.as_mut_ptr() });
-        unsafe { buf.assume_init() }
-    };
+    let mut salt = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut salt);
     let encrypted = encrypt_layers(
         data,
         password,
@@ -445,13 +437,11 @@ mod tests {
     use super::*;
     use crate::hybrid::HybridKeypair;
     use rand::RngCore;
-    use std::mem::MaybeUninit;
 
     fn random_password() -> Vec<u8> {
-        let mut bytes = MaybeUninit::<[u8; 16]>::uninit();
-        let slice = unsafe { &mut *bytes.as_mut_ptr() };
-        rand::thread_rng().fill_bytes(slice);
-        unsafe { bytes.assume_init() }.to_vec()
+        let mut bytes = [0u8; 16];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        bytes.to_vec()
     }
 
     #[test]

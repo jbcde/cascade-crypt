@@ -199,7 +199,7 @@ impl Header {
 
     pub fn parse(data: &[u8]) -> Result<(Self, &[u8]), HeaderError> {
         let (parts, remaining) = parse_header_line(data)?;
-        if parts[0] != MAGIC {
+        if parts.len() < 2 || parts[0] != MAGIC {
             return Err(HeaderError::InvalidMagic);
         }
 
@@ -389,13 +389,11 @@ mod tests {
     use super::*;
     use crate::hybrid::HybridKeypair;
     use rand::RngCore;
-    use std::mem::MaybeUninit;
 
     fn random_salt() -> [u8; 32] {
-        let mut salt = MaybeUninit::<[u8; 32]>::uninit();
-        let slice = unsafe { &mut *salt.as_mut_ptr() };
-        rand::thread_rng().fill_bytes(slice);
-        unsafe { salt.assume_init() }
+        let mut salt = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut salt);
+        salt
     }
 
     #[test]
