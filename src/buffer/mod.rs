@@ -221,6 +221,9 @@ impl LayerBuffer {
                 // Write to next file
                 next.write_all(&output).map_err(ProcessError::Io)?;
 
+                // Securely wipe stale data from the source file
+                current.wipe().map_err(ProcessError::Io)?;
+
                 // Swap
                 *current_is_a = !*current_is_a;
                 Ok(())
@@ -229,9 +232,9 @@ impl LayerBuffer {
     }
 
     /// Finalize the buffer: return the data and securely delete any temp files.
-    pub fn finalize(self) -> io::Result<Vec<u8>> {
+    pub fn finalize(self) -> io::Result<Zeroizing<Vec<u8>>> {
         match self {
-            LayerBuffer::Ram(data) => Ok(data.to_vec()),
+            LayerBuffer::Ram(data) => Ok(data),
             LayerBuffer::Disk {
                 mut file_a,
                 mut file_b,
@@ -242,13 +245,10 @@ impl LayerBuffer {
                 } else {
                     file_b.read_all()?
                 };
-                // Secure delete both temp files
-                // Note: secure_delete consumes the file, so we can't use it here directly
-                // since we already have mutable borrows. The Drop impl will handle cleanup.
-                // For explicit cleanup, we'd need to restructure. For now, Drop handles it.
+                // Drop triggers secure overwrite + unlink for both temp files
                 drop(file_a);
                 drop(file_b);
-                Ok(result)
+                Ok(Zeroizing::new(result))
             }
         }
     }

@@ -4,6 +4,22 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] - 2026-02-05
+
+### Security
+- **Fixed:** CBC padding validation now fully constant-time (prevents padding oracle timing attacks)
+- **Fixed:** Password confirmation string now zeroized after use (was lingering in heap memory)
+- **Fixed:** Derived encryption keys now use `LockedVec` with automatic `munlock` on drop (previously `mlock`'d memory was never unlocked)
+- **Fixed:** Disk-mode buffer now securely wipes stale data from inactive temp file after each layer
+- **Fixed:** `LayerBuffer::finalize()` now returns `Zeroizing<Vec<u8>>` to prevent un-zeroized plaintext copies
+- **Fixed:** `encoder::encode()` now returns `Result` with explicit bounds check, preventing silent u32 truncation on files >4 GiB
+
+### Changed
+- Removed `clap` and `indicatif` dependencies — hand-rolled CLI parser and simple stderr progress
+- Binary size reduced from 1.4 MB to 1.1 MB (stripped), or 580 KB with UPX compression
+- Public encrypt API now takes `&[Algorithm]` instead of `Vec<Algorithm>` (avoids unnecessary allocation)
+- Removed dead `Header::compute_hash()` method
+
 ## [0.4.2] - 2026-02-03
 
 ### Added

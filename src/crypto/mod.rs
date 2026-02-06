@@ -178,6 +178,12 @@ impl Algorithm {
     }
 }
 
+impl std::fmt::Display for Algorithm {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
 // Macro for CBC ciphers
 macro_rules! cbc_impl {
     ($cipher:ty, $key_len:expr, $iv_size:expr, $block_size:expr) => {{
@@ -230,20 +236,26 @@ macro_rules! cbc_impl {
                 .decrypt_padded_mut::<block_padding::NoPadding>(&mut buffer)
                 .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
 
-            let padding_len = *buffer
+            let last_byte = *buffer
                 .last()
-                .ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))?
-                as usize;
-            if padding_len == 0 || padding_len > $block_size || padding_len > buffer.len() {
-                return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
+                .ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))?;
+            let padding_len = last_byte as usize;
+
+            // Fully constant-time padding validation.
+            // Always examines exactly $block_size bytes to prevent leaking
+            // the padding value via timing.
+            let block_size: usize = $block_size;
+            let valid = ((padding_len >= 1) as u8) & ((padding_len <= block_size) as u8);
+            let mut bad = valid ^ 1; // 1 if length is already invalid
+
+            let check_start = buffer.len() - block_size;
+            let threshold = block_size.saturating_sub(padding_len);
+            for i in 0..block_size {
+                let in_pad = ((i >= threshold) as u8) & valid;
+                bad |= in_pad & (buffer[check_start + i] ^ last_byte);
             }
-            // Constant-time padding validation to prevent timing side-channels
-            let padding_byte = padding_len as u8;
-            let mut diff = 0u8;
-            for &b in &buffer[buffer.len() - padding_len..] {
-                diff |= b ^ padding_byte;
-            }
-            if diff != 0 {
+
+            if bad != 0 {
                 return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
             }
             buffer.truncate(buffer.len() - padding_len);
@@ -369,20 +381,26 @@ macro_rules! cipher05_cbc_impl {
                 }
                 prev = ct_backup;
             }
-            let padding_len = *buffer
+            let last_byte = *buffer
                 .last()
-                .ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))?
-                as usize;
-            if padding_len == 0 || padding_len > $block_size || padding_len > buffer.len() {
-                return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
+                .ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))?;
+            let padding_len = last_byte as usize;
+
+            // Fully constant-time padding validation.
+            // Always examines exactly $block_size bytes to prevent leaking
+            // the padding value via timing.
+            let block_size: usize = $block_size;
+            let valid = ((padding_len >= 1) as u8) & ((padding_len <= block_size) as u8);
+            let mut bad = valid ^ 1;
+
+            let check_start = buffer.len() - block_size;
+            let threshold = block_size.saturating_sub(padding_len);
+            for i in 0..block_size {
+                let in_pad = ((i >= threshold) as u8) & valid;
+                bad |= in_pad & (buffer[check_start + i] ^ last_byte);
             }
-            // Constant-time padding validation to prevent timing side-channels
-            let padding_byte = padding_len as u8;
-            let mut diff = 0u8;
-            for &b in &buffer[buffer.len() - padding_len..] {
-                diff |= b ^ padding_byte;
-            }
-            if diff != 0 {
+
+            if bad != 0 {
                 return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
             }
             buffer.truncate(buffer.len() - padding_len);

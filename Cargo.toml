@@ -1,14 +1,11 @@
 [package]
 name = "cascrypt"
-version = "0.4.2"
+version = "0.5.0"
 edition = "2021"
 description = "Cascading binary encryption with user-controlled algorithm ordering"
 license = "MIT"
 
 [dependencies]
-# CLI
-clap = { version = "4", features = ["derive"] }
-
 # Encryption - Block ciphers (RustCrypto ecosystem, cipher 0.4)
 aes-gcm = "0.10"
 des = "0.8"
@@ -80,9 +77,6 @@ tempfile = "3.10"
 
 # Password input
 rpassword = "7"
-
-# Progress bar
-indicatif = "0.18"
 
 [profile.release]
 opt-level = "z"         # Optimize for size

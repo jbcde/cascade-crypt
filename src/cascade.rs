@@ -56,6 +56,8 @@ pub enum CascadeError {
     Base64(#[from] base64::DecodeError),
     #[error("No algorithms specified")]
     NoAlgorithms,
+    #[error("Input too large: {0}")]
+    InputTooLarge(&'static str),
     #[error("Encrypted header requires private key")]
     PrivateKeyRequired,
     #[error("I/O error: {0}")]
@@ -77,7 +79,7 @@ fn derive_key(
     algo: Algorithm,
     layer: usize,
     params: &Argon2Params,
-) -> Result<Zeroizing<Vec<u8>>, CascadeError> {
+) -> Result<crate::memlock::LockedVec, CascadeError> {
     let argon2 = Argon2::new(
         argon2::Algorithm::Argon2id,
         argon2::Version::V0x13,
@@ -89,16 +91,13 @@ fn derive_key(
     full_salt.extend_from_slice(algo.salt_context());
     full_salt.extend_from_slice(&(layer as u64).to_le_bytes());
 
-    let mut key = Zeroizing::new(vec![0u8; algo.key_size()]);
+    let mut key = vec![0u8; algo.key_size()];
     argon2
         .hash_password_into(password, &full_salt, &mut key)
         .map_err(|_| CascadeError::KeyDerivation)?;
 
-    // Attempt to lock key in memory (prevent swapping to disk)
-    // Failure is non-fatal - mlock may require elevated privileges
-    crate::memlock::mlock(key.as_ptr(), key.len());
-
-    Ok(key)
+    // LockedVec: mlocks the memory, zeroizes on drop, munlocks on drop
+    Ok(crate::memlock::LockedVec::new(key))
 }
 
 /// Derive keys for each layer in parallel (unique key per layer position)
@@ -107,7 +106,7 @@ fn derive_keys_parallel(
     salt: &[u8],
     algorithms: &[Algorithm],
     params: &Argon2Params,
-) -> Result<Vec<Zeroizing<Vec<u8>>>, CascadeError> {
+) -> Result<Vec<crate::memlock::LockedVec>, CascadeError> {
     algorithms
         .par_iter()
         .enumerate()
@@ -129,7 +128,9 @@ where
 {
     let total = algorithms.len();
     let keys = derive_keys_parallel(password, salt, algorithms, &Argon2Params::default())?;
-    let encoded = encoder::encode(data).into_bytes();
+    let encoded = encoder::encode(data)
+        .map_err(CascadeError::InputTooLarge)?
+        .into_bytes();
     let initial = if locked { _t::_x(&encoded) } else { encoded };
 
     // Initialize buffer based on mode
@@ -155,14 +156,14 @@ where
         progress(i + 1, total);
     }
 
-    Ok(buffer.finalize()?)
+    Ok(buffer.finalize()?.to_vec())
 }
 
 #[must_use = "encrypted data must be used"]
 pub fn encrypt(
     data: &[u8],
     password: &[u8],
-    algorithms: Vec<Algorithm>,
+    algorithms: &[Algorithm],
 ) -> Result<Vec<u8>, CascadeError> {
     encrypt_with_progress(data, password, algorithms, |_, _| {})
 }
@@ -171,7 +172,7 @@ pub fn encrypt(
 pub fn encrypt_with_progress<F>(
     data: &[u8],
     password: &[u8],
-    algorithms: Vec<Algorithm>,
+    algorithms: &[Algorithm],
     progress: F,
 ) -> Result<Vec<u8>, CascadeError>
 where
@@ -184,7 +185,7 @@ where
 pub fn encrypt_with_buffer_mode<F>(
     data: &[u8],
     password: &[u8],
-    algorithms: Vec<Algorithm>,
+    algorithms: &[Algorithm],
     buffer_mode: BufferMode,
     progress: F,
 ) -> Result<Vec<u8>, CascadeError>
@@ -202,13 +203,13 @@ where
     let encrypted = encrypt_layers(
         data,
         password,
-        &algorithms,
+        algorithms,
         &salt,
         false,
         buffer_mode,
         progress,
     )?;
-    let mut result = Header::with_ciphertext(algorithms, salt, false, &encrypted)
+    let mut result = Header::with_ciphertext(algorithms.to_vec(), salt, false, &encrypted)
         .serialize()
         .into_bytes();
     result.extend(encrypted);
@@ -219,7 +220,7 @@ where
 pub fn encrypt_protected(
     data: &[u8],
     password: &[u8],
-    algorithms: Vec<Algorithm>,
+    algorithms: &[Algorithm],
     recipient_public: &HybridPublicKey,
     locked: bool,
 ) -> Result<Vec<u8>, CascadeError> {
@@ -237,7 +238,7 @@ pub fn encrypt_protected(
 pub fn encrypt_protected_with_progress<F>(
     data: &[u8],
     password: &[u8],
-    algorithms: Vec<Algorithm>,
+    algorithms: &[Algorithm],
     recipient_public: &HybridPublicKey,
     locked: bool,
     progress: F,
@@ -260,7 +261,7 @@ where
 pub fn encrypt_protected_with_buffer_mode<F>(
     data: &[u8],
     password: &[u8],
-    algorithms: Vec<Algorithm>,
+    algorithms: &[Algorithm],
     recipient_public: &HybridPublicKey,
     locked: bool,
     buffer_mode: BufferMode,
@@ -280,13 +281,13 @@ where
     let encrypted = encrypt_layers(
         data,
         password,
-        &algorithms,
+        algorithms,
         &salt,
         locked,
         buffer_mode,
         progress,
     )?;
-    let mut result = Header::with_ciphertext(algorithms, salt, locked, &encrypted)
+    let mut result = Header::with_ciphertext(algorithms.to_vec(), salt, locked, &encrypted)
         .serialize_encrypted(recipient_public)?
         .into_bytes();
     result.extend(encrypted);
@@ -416,7 +417,7 @@ where
         progress(i + 1, total);
     }
 
-    let decrypted = Zeroizing::new(buffer.finalize()?);
+    let decrypted = buffer.finalize()?;
     let decrypted = if header.locked {
         Zeroizing::new(_t::_x(&decrypted))
     } else {
@@ -457,7 +458,7 @@ mod tests {
     fn test_single_algorithm() {
         let data = b"Hello, cascrypt!";
         let password = random_password();
-        let encrypted = encrypt(data, &password, vec![Algorithm::Aes256]).unwrap();
+        let encrypted = encrypt(data, &password, &[Algorithm::Aes256]).unwrap();
         let decrypted = decrypt(&encrypted, &password).unwrap();
         assert_eq!(data.as_slice(), decrypted.as_slice());
     }
@@ -469,7 +470,7 @@ mod tests {
         let encrypted = encrypt(
             data,
             &password,
-            vec![
+            &[
                 Algorithm::Aes256,
                 Algorithm::TripleDes,
                 Algorithm::Twofish,
@@ -486,7 +487,7 @@ mod tests {
         let data: Vec<u8> = (0..=255).collect();
         let password = random_password();
         let encrypted =
-            encrypt(&data, &password, vec![Algorithm::Serpent, Algorithm::Aes256]).unwrap();
+            encrypt(&data, &password, &[Algorithm::Serpent, Algorithm::Aes256]).unwrap();
         let decrypted = decrypt(&encrypted, &password).unwrap();
         assert_eq!(data, decrypted);
     }
@@ -496,7 +497,7 @@ mod tests {
         let data = b"Secret data";
         let correct_password = random_password();
         let wrong_password = random_password();
-        let encrypted = encrypt(data, &correct_password, vec![Algorithm::Aes256]).unwrap();
+        let encrypted = encrypt(data, &correct_password, &[Algorithm::Aes256]).unwrap();
         assert!(decrypt(&encrypted, &wrong_password).is_err());
     }
 
@@ -509,7 +510,7 @@ mod tests {
         let encrypted = encrypt_protected(
             data,
             &password,
-            vec![Algorithm::Aes256, Algorithm::ChaCha20Poly1305],
+            &[Algorithm::Aes256, Algorithm::ChaCha20Poly1305],
             &keypair.public,
             false,
         )
@@ -528,7 +529,7 @@ mod tests {
         let encrypted = encrypt_protected(
             data,
             &password,
-            vec![Algorithm::Aes256],
+            &[Algorithm::Aes256],
             &keypair.public,
             false,
         )
@@ -548,7 +549,7 @@ mod tests {
         let encrypted = encrypt_protected(
             data,
             &password,
-            vec![Algorithm::Aes256],
+            &[Algorithm::Aes256],
             &keypair.public,
             true,
         )
@@ -571,7 +572,7 @@ mod tests {
     fn test_ciphertext_tampering_detected() {
         let data = b"Secret data";
         let password = random_password();
-        let mut encrypted = encrypt(data, &password, vec![Algorithm::Aes256]).unwrap();
+        let mut encrypted = encrypt(data, &password, &[Algorithm::Aes256]).unwrap();
         // Tamper with ciphertext (last byte)
         let len = encrypted.len();
         encrypted[len - 1] ^= 0xFF;
@@ -588,7 +589,7 @@ mod tests {
         let mut encrypted = encrypt_protected(
             data,
             &password,
-            vec![Algorithm::Aes256],
+            &[Algorithm::Aes256],
             &keypair.public,
             false,
         )
@@ -610,7 +611,7 @@ mod tests {
         let encrypted = encrypt(
             data,
             &password,
-            vec![Algorithm::Aes256, Algorithm::Aes256, Algorithm::Aes256],
+            &[Algorithm::Aes256, Algorithm::Aes256, Algorithm::Aes256],
         )
         .unwrap();
         let decrypted = decrypt(&encrypted, &password).unwrap();
