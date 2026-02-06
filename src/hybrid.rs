@@ -13,7 +13,7 @@ use chacha20poly1305::{
 use hkdf::Hkdf;
 use pqcrypto_mlkem::mlkem1024;
 use pqcrypto_traits::kem::{Ciphertext, PublicKey, SecretKey, SharedSecret};
-use rand::RngCore;
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use thiserror::Error;
@@ -111,7 +111,7 @@ fn derive_symmetric_key(
 
     // Use HKDF to derive final key
     let hk = Hkdf::<Sha256>::new(Some(b"cascrypt-hybrid"), &combined);
-    let mut key_buf = [0u8; 32];
+    let mut key_buf = <[u8; 32]>::default();
     hk.expand(b"header-encryption", &mut key_buf)
         .map_err(|_| HybridError::KeyGeneration)?;
     Ok(Zeroizing::new(key_buf))
@@ -139,8 +139,7 @@ pub fn encrypt(
     let symmetric_key = derive_symmetric_key(x25519_shared.as_bytes(), kyber_shared.as_bytes())?;
 
     // Generate nonce
-    let mut nonce_bytes = [0u8; 12];
-    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    let nonce_bytes: [u8; 12] = rand::thread_rng().gen();
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     // Encrypt plaintext with ChaCha20-Poly1305

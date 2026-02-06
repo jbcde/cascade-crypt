@@ -1,5 +1,5 @@
 use argon2::Argon2;
-use rand::RngCore;
+use rand::Rng;
 use rayon::prelude::*;
 use thiserror::Error;
 use zeroize::Zeroizing;
@@ -193,8 +193,7 @@ where
     if algorithms.is_empty() {
         return Err(CascadeError::NoAlgorithms);
     }
-    let mut salt = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut salt);
+    let salt: [u8; 32] = rand::thread_rng().gen();
     let encrypted = encrypt_layers(
         data,
         password,
@@ -268,8 +267,7 @@ where
     if algorithms.is_empty() {
         return Err(CascadeError::NoAlgorithms);
     }
-    let mut salt = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut salt);
+    let salt: [u8; 32] = rand::thread_rng().gen();
     let encrypted = encrypt_layers(
         data,
         password,
@@ -436,11 +434,10 @@ where
 mod tests {
     use super::*;
     use crate::hybrid::HybridKeypair;
-    use rand::RngCore;
+    use rand::Rng;
 
     fn random_password() -> Vec<u8> {
-        let mut bytes = [0u8; 16];
-        rand::thread_rng().fill_bytes(&mut bytes);
+        let bytes: [u8; 16] = rand::thread_rng().gen();
         bytes.to_vec()
     }
 

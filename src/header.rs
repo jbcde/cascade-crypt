@@ -388,12 +388,10 @@ mod hex {
 mod tests {
     use super::*;
     use crate::hybrid::HybridKeypair;
-    use rand::RngCore;
+    use rand::Rng;
 
     fn random_salt() -> [u8; 32] {
-        let mut salt = [0u8; 32];
-        rand::thread_rng().fill_bytes(&mut salt);
-        salt
+        rand::thread_rng().gen()
     }
 
     #[test]
