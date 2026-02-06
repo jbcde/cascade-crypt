@@ -4,6 +4,16 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.2] - 2026-02-06
+
+### Security
+- **Fixed:** Keypair and public key files (`keygen`, `export-pubkey`) now written with mode 0600 on Unix — previously inherited umask (typically 0644), making private key material world-readable
+- **Fixed:** Argon2 parameters parsed from headers are now bounds-checked (m_cost <= 4 GiB, t_cost <= 100, p_cost <= 255, all > 0) — prevents denial-of-service from crafted headers with extreme values
+
+### Changed
+- Added documentation on `BufferMode::Disk` and `LayerBuffer` clarifying that disk mode bounds peak memory to ~2x data size per layer, not constant memory
+- Added explanatory comment on `cipher05_cbc_impl!` macro documenting why cipher 0.5 traits are imported through `magma`'s re-export (dual cipher 0.4/0.5 coexistence constraint)
+
 ## [0.5.1] - 2026-02-06
 
 ### Security
