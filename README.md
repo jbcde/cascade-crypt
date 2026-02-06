@@ -218,6 +218,12 @@ cascrypt -s -d -i secret.enc -o secret.bin
 - **Hybrid encryption** combines classical and post-quantum security for header protection
 - **Quantum resistance**: Grover's algorithm halves effective key strength. 256-bit ciphers remain secure (128-bit post-quantum). Avoid using *only* 128-bit ciphers (`-F -I -4 -E -6 -J -N`) if quantum resistance matters—include at least one 256-bit cipher in your cascade.
 
+## Limitations
+
+- **Maximum file size: 4 GiB** — The encoder uses a 4-byte (u32) length prefix, capping plaintext at ~4 GiB.
+- **Memory usage: ~2-3x file size** — Multi-layer encryption requires the input plus intermediate buffers. `--buffer=disk` offloads intermediate layers to temp files, but the initial read and final write remain in RAM.
+- For very large files, consider splitting before encryption.
+
 ## Performance
 
 Tested on 1MB file through all 20 ciphers (Intel Xeon E-2176M @ 2.70GHz):
