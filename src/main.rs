@@ -723,7 +723,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             )
             .context("Encryption failed")?;
             finish_progress(show_progress);
-            result
+            Zeroizing::new(result)
         } else if cli.lock {
             anyhow::bail!("--lock requires --pubkey for protected header encryption");
         } else {
@@ -736,7 +736,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             )
             .context("Encryption failed")?;
             finish_progress(show_progress);
-            result
+            Zeroizing::new(result)
         }
     };
 

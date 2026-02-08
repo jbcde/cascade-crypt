@@ -1,5 +1,27 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rand::RngCore;
+use zeroize::Zeroizing;
+
+#[derive(Debug)]
+pub enum DecodeError {
+    Base64(base64::DecodeError),
+    InvalidFormat,
+}
+
+impl From<base64::DecodeError> for DecodeError {
+    fn from(e: base64::DecodeError) -> Self {
+        DecodeError::Base64(e)
+    }
+}
+
+impl std::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecodeError::Base64(e) => write!(f, "Base64 decode error: {}", e),
+            DecodeError::InvalidFormat => write!(f, "Invalid encoded format"),
+        }
+    }
+}
 
 /// Minimum padded size in bytes (before base64 encoding).
 /// This hides the size of small files. 1KB provides reasonable privacy
@@ -39,24 +61,20 @@ pub fn encode(data: &[u8]) -> Result<String, &'static str> {
 }
 
 /// Decode base64 string to binary data, stripping padding.
-/// Backward compatible: tries length-prefixed format first,
-/// falls back to legacy format (raw base64) if length is invalid.
+/// Expects length-prefixed format: [4-byte LE length][data][padding].
 #[inline]
-pub fn decode(encoded: &str) -> Result<Vec<u8>, base64::DecodeError> {
-    let padded = STANDARD.decode(encoded)?;
+pub fn decode(encoded: &str) -> Result<Zeroizing<Vec<u8>>, DecodeError> {
+    let padded = Zeroizing::new(STANDARD.decode(encoded)?);
 
-    // Try format with 4-byte length prefix
     if padded.len() >= 4 {
         let len = u32::from_le_bytes([padded[0], padded[1], padded[2], padded[3]]) as usize;
 
-        // Valid format: length makes sense and data would fit
         if len <= padded.len() - 4 {
-            return Ok(padded[4..4 + len].to_vec());
+            return Ok(Zeroizing::new(padded[4..4 + len].to_vec()));
         }
     }
 
-    // Legacy format: raw data without length prefix
-    Ok(padded)
+    Err(DecodeError::InvalidFormat)
 }
 
 #[cfg(test)]
@@ -76,7 +94,7 @@ mod tests {
         let binary: Vec<u8> = (0..=255).collect();
         let encoded = encode(&binary).unwrap();
         let decoded = decode(&encoded).unwrap();
-        assert_eq!(binary, decoded);
+        assert_eq!(binary.as_slice(), decoded.as_slice());
     }
 
     #[test]
@@ -110,16 +128,14 @@ mod tests {
         assert_eq!(decoded_raw.len(), 4 + large.len());
         // Decode should return original
         let decoded = decode(&encoded).unwrap();
-        assert_eq!(large, decoded);
+        assert_eq!(large.as_slice(), decoded.as_slice());
     }
 
     #[test]
-    fn test_legacy_format_compatibility() {
-        // Old files were encoded without length prefix - verify backward compat
-        let legacy_data = b"Legacy plaintext without length prefix";
-        let legacy_encoded = STANDARD.encode(legacy_data);
-        // decode() should fall back to raw format
-        let decoded = decode(&legacy_encoded).unwrap();
-        assert_eq!(legacy_data.as_slice(), decoded.as_slice());
+    fn test_raw_base64_rejected() {
+        // Data without length prefix should be rejected (no legacy fallback)
+        let raw_data = b"Raw data without length prefix";
+        let raw_encoded = STANDARD.encode(raw_data);
+        assert!(decode(&raw_encoded).is_err());
     }
 }

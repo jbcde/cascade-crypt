@@ -4,6 +4,20 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-02-08
+
+### Security
+- **Fixed:** Public decrypt API (`decrypt`, `decrypt_with_progress`, `decrypt_with_buffer_mode`, `decrypt_protected`, `decrypt_protected_with_progress`, `decrypt_protected_with_buffer_mode`) now returns `Zeroizing<Vec<u8>>` — plaintext was previously held in unprotected heap memory between decryption and caller consumption
+- **Fixed:** `encoder::decode()` internal base64-decoded buffer now wrapped in `Zeroizing` — plaintext was previously left unzeroized in freed heap memory
+
+### Changed
+- Removed legacy encoder fallback that accepted raw base64 without length prefix — all files since v0.4.1 use the length-prefixed format, and the v0.4.0 header break makes pre-v0.4.1 files unreachable
+- `encoder::decode()` now returns `Result<Zeroizing<Vec<u8>>, DecodeError>` with a typed `DecodeError` enum (was `Result<Vec<u8>, String>`)
+- Encrypt results in CLI handler wrapped in `Zeroizing` for uniform type handling with decrypt results
+
+### Breaking Changes
+- **Backward compatibility:** Files encrypted with pre-v0.4.1 encoders (raw base64 without length prefix) can no longer be decoded. This is a theoretical break only — the v0.4.0 header format change already made such files unreadable. Files from v0.4.0 onward are fully compatible.
+
 ## [0.5.2] - 2026-02-06
 
 ### Security
