@@ -50,8 +50,6 @@ pub enum CascadeError {
     Header(#[from] HeaderError),
     #[error("Key derivation failed")]
     KeyDerivation,
-    #[error("Base64 decode error: {0}")]
-    Base64(#[from] base64::DecodeError),
     #[error("No algorithms specified")]
     NoAlgorithms,
     #[error("Input too large: {0}")]
@@ -285,7 +283,7 @@ where
 }
 
 #[must_use = "decrypted data must be used"]
-pub fn decrypt(data: &[u8], password: &[u8]) -> Result<Vec<u8>, CascadeError> {
+pub fn decrypt(data: &[u8], password: &[u8]) -> Result<Zeroizing<Vec<u8>>, CascadeError> {
     decrypt_with_progress(data, password, |_, _| {})
 }
 
@@ -294,7 +292,7 @@ pub fn decrypt_with_progress<F>(
     data: &[u8],
     password: &[u8],
     progress: F,
-) -> Result<Vec<u8>, CascadeError>
+) -> Result<Zeroizing<Vec<u8>>, CascadeError>
 where
     F: FnMut(usize, usize),
 {
@@ -307,7 +305,7 @@ pub fn decrypt_with_buffer_mode<F>(
     password: &[u8],
     buffer_mode: BufferMode,
     progress: F,
-) -> Result<Vec<u8>, CascadeError>
+) -> Result<Zeroizing<Vec<u8>>, CascadeError>
 where
     F: FnMut(usize, usize),
 {
@@ -324,7 +322,7 @@ pub fn decrypt_protected(
     data: &[u8],
     password: &[u8],
     private_key: &HybridPrivateKey,
-) -> Result<Vec<u8>, CascadeError> {
+) -> Result<Zeroizing<Vec<u8>>, CascadeError> {
     decrypt_protected_with_progress(data, password, private_key, |_, _| {})
 }
 
@@ -334,7 +332,7 @@ pub fn decrypt_protected_with_progress<F>(
     password: &[u8],
     private_key: &HybridPrivateKey,
     progress: F,
-) -> Result<Vec<u8>, CascadeError>
+) -> Result<Zeroizing<Vec<u8>>, CascadeError>
 where
     F: FnMut(usize, usize),
 {
@@ -348,7 +346,7 @@ pub fn decrypt_protected_with_buffer_mode<F>(
     private_key: &HybridPrivateKey,
     buffer_mode: BufferMode,
     progress: F,
-) -> Result<Vec<u8>, CascadeError>
+) -> Result<Zeroizing<Vec<u8>>, CascadeError>
 where
     F: FnMut(usize, usize),
 {
@@ -367,7 +365,7 @@ fn decrypt_layers<F>(
     password: &[u8],
     buffer_mode: BufferMode,
     mut progress: F,
-) -> Result<Vec<u8>, CascadeError>
+) -> Result<Zeroizing<Vec<u8>>, CascadeError>
 where
     F: FnMut(usize, usize),
 {
@@ -476,7 +474,7 @@ mod tests {
         let encrypted =
             encrypt(&data, &password, &[Algorithm::Serpent, Algorithm::Aes256]).unwrap();
         let decrypted = decrypt(&encrypted, &password).unwrap();
-        assert_eq!(data, decrypted);
+        assert_eq!(data.as_slice(), decrypted.as_slice());
     }
 
     #[test]

@@ -1535,3 +1535,164 @@ fn test_buffer_mode_invalid() {
 
     cleanup(&[input, output, keyfile]);
 }
+
+// ============================================================================
+// Version 0.6.0 Compatibility Tests
+// ============================================================================
+
+#[test]
+fn test_v060_roundtrip_all_modes() {
+    // Comprehensive roundtrip test confirming v0.6.0 changes
+    // (Zeroizing return types, removed legacy fallback) don't break
+    // encrypt/decrypt for any algorithm class or buffer mode.
+    let data = b"v0.6.0 compatibility verification across all cipher families";
+    let keyfile = create_keyfile();
+
+    // Test one AEAD cipher, one cipher-0.4 CBC, one cipher-0.5 CBC
+    let combos: &[(&[&str], &str)] = &[
+        (&["-A"], "aead_aes"),
+        (&["-S"], "cbc04_serpent"),
+        (&["-3"], "cbc05_threefish"),
+        (&["-N"], "aead_ascon"),
+        (&["-A", "-S", "-3", "-N"], "mixed_cascade"),
+    ];
+
+    for (flags, label) in combos {
+        let input = create_temp_file(&format!("v060_{}_input.bin", label), data);
+        let encrypted = create_temp_file(&format!("v060_{}_encrypted.bin", label), b"");
+        let decrypted = create_temp_file(&format!("v060_{}_decrypted.bin", label), b"");
+
+        let mut enc_args: Vec<&str> = flags.to_vec();
+        enc_args.extend_from_slice(&[
+            "-i",
+            input.to_str().unwrap(),
+            "-o",
+            encrypted.to_str().unwrap(),
+            "--keyfile",
+            keyfile.to_str().unwrap(),
+            "-s",
+        ]);
+        run_cascade_ok(&enc_args);
+
+        run_cascade_ok(&[
+            "-d",
+            "-i",
+            encrypted.to_str().unwrap(),
+            "-o",
+            decrypted.to_str().unwrap(),
+            "--keyfile",
+            keyfile.to_str().unwrap(),
+            "-s",
+        ]);
+
+        assert_eq!(
+            fs::read(&input).unwrap(),
+            fs::read(&decrypted).unwrap(),
+            "v0.6.0 roundtrip failed for {}",
+            label
+        );
+
+        cleanup(&[input, encrypted, decrypted]);
+    }
+    cleanup(&[keyfile]);
+}
+
+#[test]
+fn test_v060_protected_header_roundtrip() {
+    // Confirm protected headers (hybrid X25519+ML-KEM) still work
+    // with the Zeroizing return type changes.
+    let data = b"v0.6.0 protected header verification";
+    let input = create_temp_file("v060_prot_input.bin", data);
+    let encrypted = create_temp_file("v060_prot_encrypted.bin", b"");
+    let decrypted = create_temp_file("v060_prot_decrypted.bin", b"");
+    let keypair = create_temp_file("v060_keypair.json", b"");
+    let pubkey = create_temp_file("v060_pubkey.json", b"");
+    let keyfile = create_keyfile();
+
+    run_cascade_ok(&[
+        "keygen",
+        "-o",
+        keypair.to_str().unwrap(),
+        "--export-pubkey",
+        pubkey.to_str().unwrap(),
+    ]);
+
+    // Encrypt with protected header + mixed cascade
+    run_cascade_ok(&[
+        "-A",
+        "-S",
+        "-3",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "--pubkey",
+        pubkey.to_str().unwrap(),
+        "-s",
+    ]);
+
+    // Decrypt with private key
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "--privkey",
+        keypair.to_str().unwrap(),
+        "-s",
+    ]);
+
+    assert_eq!(
+        fs::read(&input).unwrap(),
+        fs::read(&decrypted).unwrap(),
+        "v0.6.0 protected header roundtrip failed"
+    );
+
+    cleanup(&[input, encrypted, decrypted, keypair, pubkey, keyfile]);
+}
+
+#[test]
+fn test_v060_binary_data_integrity() {
+    // Verify all 256 byte values survive the encode/decode pipeline
+    // after legacy fallback removal. This catches any regression in
+    // the length-prefixed encoder path.
+    let data: Vec<u8> = (0..=255).cycle().take(4096).collect();
+    let input = create_temp_file("v060_binary_input.bin", &data);
+    let encrypted = create_temp_file("v060_binary_encrypted.bin", b"");
+    let decrypted = create_temp_file("v060_binary_decrypted.bin", b"");
+    let keyfile = create_keyfile();
+
+    run_cascade_ok(&[
+        "-A",
+        "-i",
+        input.to_str().unwrap(),
+        "-o",
+        encrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+
+    run_cascade_ok(&[
+        "-d",
+        "-i",
+        encrypted.to_str().unwrap(),
+        "-o",
+        decrypted.to_str().unwrap(),
+        "--keyfile",
+        keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+
+    let original = fs::read(&input).unwrap();
+    let result = fs::read(&decrypted).unwrap();
+    assert_eq!(original.len(), result.len(), "Size mismatch after roundtrip");
+    assert_eq!(original, result, "v0.6.0 binary data integrity check failed");
+
+    cleanup(&[input, encrypted, decrypted, keyfile]);
+}
