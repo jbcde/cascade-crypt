@@ -1709,10 +1709,10 @@ fn test_chunked_roundtrip() {
     let decrypted = create_temp_file("chunked_decrypted.bin", b"");
     let keyfile = create_keyfile();
 
-    // Encrypt with --chunk-size 1024
+    // Encrypt with --chunk 1k
     run_cascade_ok(&[
         "-A",
-        "--chunk-size", "1024",
+        "--chunk", "1k",
         "-i", input.to_str().unwrap(),
         "-o", encrypted.to_str().unwrap(),
         "--keyfile", keyfile.to_str().unwrap(),
@@ -1745,7 +1745,7 @@ fn test_chunked_single_chunk() {
 
     run_cascade_ok(&[
         "-A", "-S",
-        "--chunk-size", "65536",
+        "--chunk", "64k",
         "-i", input.to_str().unwrap(),
         "-o", encrypted.to_str().unwrap(),
         "--keyfile", keyfile.to_str().unwrap(),
@@ -1784,7 +1784,7 @@ fn test_chunked_tamper_detection() {
 
     run_cascade_ok(&[
         "-A",
-        "--chunk-size", "16",
+        "--chunk", "1k",
         "-i", input.to_str().unwrap(),
         "-o", encrypted.to_str().unwrap(),
         "--keyfile", keyfile.to_str().unwrap(),
@@ -1820,7 +1820,7 @@ fn test_chunked_multi_algorithm() {
     // Three-algorithm cascade with chunking
     run_cascade_ok(&[
         "-A", "-S", "-C",
-        "--chunk-size", "512",
+        "--chunk", "1k",
         "-i", input.to_str().unwrap(),
         "-o", encrypted.to_str().unwrap(),
         "--keyfile", keyfile.to_str().unwrap(),
@@ -1852,7 +1852,7 @@ fn test_chunked_wrong_password() {
 
     run_cascade_ok(&[
         "-A",
-        "--chunk-size", "16",
+        "--chunk", "1k",
         "-i", input.to_str().unwrap(),
         "-o", encrypted.to_str().unwrap(),
         "--keyfile", keyfile_enc.to_str().unwrap(),

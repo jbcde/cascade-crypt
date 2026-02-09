@@ -155,7 +155,7 @@ OPTIONS:
         --lock               Engage puzzle lock (requires --pubkey)
         --list               List all available algorithms and exit
         --buffer <MODE>      Buffer mode: ram, disk, or auto (default)
-        --chunk-size <BYTES> Force chunked encryption with given chunk size
+        --chunk <SIZE>       Force chunked encryption (e.g. 512k, 100m, 4g)
     -i, --input <FILE>       Input file (use '-' for stdin)
     -o, --output <FILE>      Output file (use '-' for stdout)
         --keyfile <FILE>     Read key from file
@@ -200,6 +200,28 @@ fn take_value(args: &[String], i: &mut usize, flag: &str) -> Result<String> {
         .ok_or_else(|| anyhow::anyhow!("{} requires a value", flag))
 }
 
+/// Parse a chunk size like "512k", "100m", or "4g" into bytes.
+/// The suffix is case-insensitive. No space allowed between number and unit.
+fn parse_chunk_arg(s: &str) -> Result<usize> {
+    let s = s.trim();
+    if s.is_empty() {
+        anyhow::bail!("--chunk requires a size like 512k, 100m, or 4g");
+    }
+    let (num_part, suffix) = match s.as_bytes().last() {
+        Some(b'k' | b'K') => (&s[..s.len() - 1], 1024usize),
+        Some(b'm' | b'M') => (&s[..s.len() - 1], 1024 * 1024),
+        Some(b'g' | b'G') => (&s[..s.len() - 1], 1024 * 1024 * 1024),
+        _ => anyhow::bail!("--chunk value must end with k, m, or g (e.g. 512k, 100m, 4g)"),
+    };
+    let n: usize = num_part
+        .parse()
+        .map_err(|_| anyhow::anyhow!("--chunk: invalid number in '{}' (use e.g. 512k, 100m, 4g)", s))?;
+    if n == 0 {
+        anyhow::bail!("--chunk size must be greater than zero");
+    }
+    Ok(n.checked_mul(suffix)
+        .ok_or_else(|| anyhow::anyhow!("--chunk size overflows: {}", s))?)
+}
 
 fn parse_keygen(args: &[String], start: usize) -> Result<Commands> {
     let mut output: Option<PathBuf> = None;
@@ -313,12 +335,9 @@ fn parse_cli(args: Vec<String>) -> Result<Cli> {
             "--buffer" => {
                 cli.buffer_mode = Some(take_value(&args, &mut i, "--buffer")?);
             }
-            "--chunk-size" => {
-                let val = take_value(&args, &mut i, "--chunk-size")?;
-                cli.chunk_size = Some(
-                    val.parse::<usize>()
-                        .map_err(|_| anyhow::anyhow!("--chunk-size requires a byte count, got: {}", val))?,
-                );
+            "--chunk" => {
+                let val = take_value(&args, &mut i, "--chunk")?;
+                cli.chunk_size = Some(parse_chunk_arg(&val)?);
             }
             // Algorithm short flags (single char after -)
             s if s.starts_with('-') && !s.starts_with("--") && s.len() == 2 => {
@@ -771,9 +790,9 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
 
         // Determine if chunked encryption should be used
         let effective_chunk_size = if let Some(cs) = cli.chunk_size {
-            // Explicit --chunk-size
+            // Explicit --chunk
             if is_stdin {
-                anyhow::bail!("--chunk-size requires file input (not stdin)");
+                anyhow::bail!("--chunk requires file input (not stdin)");
             }
             if is_stdout {
                 anyhow::bail!("Chunked encryption requires file output (not stdout)");
