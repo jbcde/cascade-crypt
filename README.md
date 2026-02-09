@@ -8,6 +8,7 @@ Cascading binary encryption tool with user-controlled algorithm ordering. Encryp
 
 - **20 symmetric ciphers** - mix and match in any order
 - **Cascading encryption** - algorithms applied sequentially in command-line order
+- **Chunked mode** - encrypt files of any size without exceeding available memory
 - **Combined flags** - use `-ASC` instead of `-A -S -C` for convenience
 - **Random mode** - randomly select N algorithms (with duplicates) for unpredictable layering
 - **Silent mode** - suppress all output for operational security
@@ -55,6 +56,7 @@ Suppresses all status output (algorithm chain, completion messages).
 -n, --random N      Use N randomly selected algorithms (disables manual flags)
 -s, --silent        Suppress all status output
     --progress      Show progress during encryption/decryption
+    --chunk SIZE    Force chunked encryption (e.g. 512k, 100m, 4g)
 -i, --input FILE    Input file (use '-' for stdin)
 -o, --output FILE   Output file (use '-' for stdout)
     --keyfile FILE  Read key from file
@@ -88,6 +90,36 @@ Suppresses all status output (algorithm chain, completion messages).
 | `-X` | X | XChaCha20-Poly1305 | Stream (AEAD) | — |
 
 **⚠ 64-bit block ciphers** (3DES, Blowfish, CAST5, IDEA, Magma) are vulnerable to birthday attacks when encrypting large amounts of data. Collisions become likely after ~32GB with the same key. Avoid these for large files or use them only as inner layers in a cascade.
+
+## Chunked Encryption
+
+By default, cascrypt loads the entire file into memory for encryption. When the file size exceeds 3/4 of available RAM, chunked mode activates automatically — the file is split into fixed-size pieces, each encrypted independently through the full algorithm cascade, then written sequentially to the output.
+
+Decryption detects chunked files from the header and processes them one chunk at a time. No special flags are needed on the receiving end.
+
+### Manual chunking with `--chunk`
+
+Auto-detection only considers the machine doing the encryption. If the recipient has less RAM than you do, the encrypted file may still be too large for them to decrypt in one pass. Use `--chunk` to set an explicit chunk size:
+
+```bash
+# 10 GiB file, recipient has 8 GiB RAM — chunk to 1 GiB
+cascrypt -AC --chunk 1g -i large.bin -o large.enc
+```
+
+The recipient decrypts normally:
+```bash
+cascrypt -d -i large.enc -o large.bin
+```
+
+Each chunk is decrypted independently, so peak memory stays proportional to the chunk size regardless of total file size.
+
+Size suffixes: `k` (kilobytes), `m` (megabytes), `g` (gigabytes). Case-insensitive, no space between number and unit.
+
+### Security properties
+
+- Each chunk derives its own key material from a unique random 32-byte salt via Argon2id
+- A SHA-256 hash over all chunk frames is stored in the header and verified after decryption
+- Tampering with any chunk, or reordering chunks, is detected
 
 ## Hybrid Header Protection
 
@@ -164,6 +196,21 @@ Error: Encrypted header requires private key
 - **Encrypted payload**: Algorithm codes + salt encrypted with ChaCha20-Poly1305 (base64)
 - **SHA-256**: Hash of encrypted components
 
+### Version 9 (Chunked, Plaintext Header)
+```
+[CCRYPT|9|<algo_codes>|<argon2_params>|<chunk_count>|<full_hash>|<header_hash>]
+<chunk_frame_0><chunk_frame_1>...
+```
+
+- **Version**: 9
+- **Chunk count**: Number of chunk frames following the header
+- **Full hash**: SHA-256 of all concatenated chunk frames
+- Each chunk frame: `[8-byte LE length][32-byte salt][ciphertext]`
+
+### Version 10 (Chunked, Encrypted Header)
+
+Same as v8 with `chunk_count` added to the encrypted payload. Chunk frames follow the header in the same format as v9.
+
 ## Examples
 
 ```bash
@@ -187,6 +234,9 @@ cascrypt keygen -o alice.keypair --export-pubkey alice.pubkey
 cascrypt -ACS -i secret.bin -o secret.enc --pubkey alice.pubkey
 cascrypt -d -i secret.enc -o secret.bin --privkey alice.keypair
 
+# Large file with explicit chunk size for low-memory recipients
+cascrypt -AC --chunk 1g -i database.bak -o database.enc
+
 # Silent decryption
 cascrypt -s -d -i secret.enc -o secret.bin
 ```
@@ -202,8 +252,9 @@ cascrypt -s -d -i secret.enc -o secret.bin
 
 ## Limitations
 
-- **Memory usage: ~2-3x file size** — Multi-layer encryption requires the input plus intermediate buffers. `--buffer=disk` offloads intermediate layers to temp files, but the initial read and final write remain in RAM.
-- For very large files, consider splitting before encryption or using `--buffer=disk`.
+- **Non-chunked mode memory usage: ~2-3x file size** — Multi-layer encryption requires the input plus intermediate buffers. `--buffer=disk` offloads intermediate layers to temp files, but the initial read and final write remain in RAM.
+- **Chunked mode** avoids this — memory stays proportional to chunk size. Activates automatically for large files or manually with `--chunk`.
+- Chunked encryption requires file I/O (not stdin/stdout) since the header is finalized after all chunks are written.
 
 ## Performance
 

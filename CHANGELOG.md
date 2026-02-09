@@ -4,6 +4,20 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0-unstable] - 2026-02-09
+
+### Added
+- **Chunked encryption** for files that exceed available memory. Files are split into fixed-size pieces, each encrypted independently through the full algorithm cascade with its own Argon2id-derived key from a unique random salt. A SHA-256 hash over all chunk frames is verified on decryption.
+- Chunked mode activates automatically when file size exceeds 3/4 of available RAM
+- `--chunk <SIZE>` flag for manual chunk size control — accepts human-readable sizes (`512k`, `100m`, `4g`, case-insensitive). Use this when the recipient has less RAM than the encrypting machine, ensuring they can decrypt without memory pressure.
+- Header versions 9 (chunked, plaintext) and 10 (chunked, encrypted) with chunk count and frame integrity hash
+- Decryption auto-detects chunked files from the header — no flags needed on the receiving end
+- 5 new E2E tests covering chunked roundtrip, single-chunk, tamper detection, multi-algorithm cascade, and wrong password
+
+### Changed
+- `encrypt_layers`, `decrypt_layers`, `derive_keys_parallel` visibility widened to `pub(crate)` (no public API change)
+- `buffer::get_available_memory()` visibility widened to `pub(crate)`
+
 ## [0.6.1] - 2026-02-09
 
 ### Changed
