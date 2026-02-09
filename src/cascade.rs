@@ -52,8 +52,6 @@ pub enum CascadeError {
     KeyDerivation,
     #[error("No algorithms specified")]
     NoAlgorithms,
-    #[error("Input too large: {0}")]
-    InputTooLarge(&'static str),
     #[error("Encrypted header requires private key")]
     PrivateKeyRequired,
     #[error("I/O error: {0}")]
@@ -124,9 +122,7 @@ where
 {
     let total = algorithms.len();
     let keys = derive_keys_parallel(password, salt, algorithms, &Argon2Params::default())?;
-    let encoded = encoder::encode(data)
-        .map_err(CascadeError::InputTooLarge)?
-        .into_bytes();
+    let encoded = encoder::encode(data).into_bytes();
     let initial = if locked { _t::_x(&encoded) } else { encoded };
 
     // Initialize buffer based on mode

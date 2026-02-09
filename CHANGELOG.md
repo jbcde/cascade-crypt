@@ -4,6 +4,16 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] - 2026-02-09
+
+### Changed
+- Encoder length prefix widened from 4 bytes (`u32`) to 8 bytes (`u64`), removing the 4 GiB file size limit
+- `encoder::encode()` now returns `String` directly (was `Result<String, &'static str>`) — no size limit to enforce
+- Removed `CascadeError::InputTooLarge` variant (no longer reachable)
+
+### Breaking Changes
+- **Backward compatibility:** Files encrypted with v0.6.0 or earlier use a 4-byte length prefix in the encoder and cannot be decoded by v0.6.1. Decrypt with the prior version before upgrading, then re-encrypt.
+
 ## [0.6.0] - 2026-02-08
 
 ### Security
