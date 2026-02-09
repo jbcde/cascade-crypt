@@ -504,6 +504,7 @@ fn make_progress_cb(show: bool, label: &str) -> Box<dyn FnMut(usize, usize) + '_
     if show {
         Box::new(move |cur, total| {
             eprint!("\r{} {}/{}  ", label, cur, total);
+            let _ = io::stderr().flush();
         })
     } else {
         Box::new(|_, _| {})
