@@ -1,6 +1,6 @@
 [package]
 name = "cascrypt"
-version = "0.6.1"
+version = "0.7.0-unstable"
 edition = "2021"
 description = "Cascading binary encryption with user-controlled algorithm ordering"
 license = "MIT"
