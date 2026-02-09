@@ -2,7 +2,7 @@
 
 Cascading binary encryption tool with user-controlled algorithm ordering. Encrypt files through multiple layers of encryption, applied in the order you specify.
 
-> **v0.5.0 Breaking Changes:** The `-k`/`--key` command-line password flag has been removed for security reasons (passwords were visible in `ps`, `/proc`, and shell history). Use `--keyfile` or the interactive prompt instead. The animated progress bar has also been replaced with a simple progress counter for bloat reasons. See [CHANGELOG.md](CHANGELOG.md) for details.
+> **v0.6.1 Breaking Change:** The encoder length prefix has been widened from 4 bytes to 8 bytes, removing the 4 GiB file size limit. Files encrypted with v0.6.0 or earlier must be decrypted with the prior version before upgrading. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## Features
 
@@ -11,7 +11,6 @@ Cascading binary encryption tool with user-controlled algorithm ordering. Encryp
 - **Combined flags** - use `-ASC` instead of `-A -S -C` for convenience
 - **Random mode** - randomly select N algorithms (with duplicates) for unpredictable layering
 - **Silent mode** - suppress all output for operational security
-- **Progress indicator** - optional progress display for long operations (`--progress`)
 - **Auto-decryption** - header stores algorithm order, decryption reverses automatically
 - **Argon2id key derivation** - unique keys derived per algorithm layer
 - **SHA-256 integrity** - header hash detects tampering
@@ -140,23 +139,6 @@ Without the private key, decryption fails:
 Error: Encrypted header requires private key
 ```
 
-### Puzzle Lock
-
-The `--lock` flag engages an optional puzzle lock on the encrypted output:
-
-```bash
-cascrypt -ASC --pubkey recipient.pubkey --lock -i secret.bin -o secret.enc
-```
-
-**Important:** The puzzle lock is **not encryption**. It provides no cryptographic security whatsoever. It is a puzzle—nothing more. The actual security comes entirely from the cipher cascade and the protected header.
-
-The puzzle lock:
-- Requires `--pubkey` (only available with protected headers)
-- Is **not encryption**—do not rely on it for security
-- Applies a reversible transformation to the output
-- Cannot be reversed without the matching private key
-- Is a puzzle for the curious
-
 ## File Format
 
 ### Version 7 (Plaintext Header)
@@ -220,9 +202,8 @@ cascrypt -s -d -i secret.enc -o secret.bin
 
 ## Limitations
 
-- **Maximum file size: 4 GiB** — The encoder uses a 4-byte (u32) length prefix, capping plaintext at ~4 GiB.
 - **Memory usage: ~2-3x file size** — Multi-layer encryption requires the input plus intermediate buffers. `--buffer=disk` offloads intermediate layers to temp files, but the initial read and final write remain in RAM.
-- For very large files, consider splitting before encryption.
+- For very large files, consider splitting before encryption or using `--buffer=disk`.
 
 ## Performance
 
