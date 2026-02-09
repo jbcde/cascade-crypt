@@ -100,7 +100,7 @@ fn can_allocate(size: usize) -> bool {
 
 /// Get available memory from /proc/meminfo on Linux.
 #[cfg(target_os = "linux")]
-fn get_available_memory() -> Option<usize> {
+pub(crate) fn get_available_memory() -> Option<usize> {
     use std::fs;
 
     let content = fs::read_to_string("/proc/meminfo").ok()?;

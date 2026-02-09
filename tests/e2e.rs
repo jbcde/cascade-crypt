@@ -1696,3 +1696,176 @@ fn test_v060_binary_data_integrity() {
 
     cleanup(&[input, encrypted, decrypted, keyfile]);
 }
+
+// ============================================================================
+// Chunked Encryption Tests
+// ============================================================================
+
+#[test]
+fn test_chunked_roundtrip() {
+    let data: Vec<u8> = (0..=255).cycle().take(4096).collect();
+    let input = create_temp_file("chunked_input.bin", &data);
+    let encrypted = create_temp_file("chunked_encrypted.bin", b"");
+    let decrypted = create_temp_file("chunked_decrypted.bin", b"");
+    let keyfile = create_keyfile();
+
+    // Encrypt with --chunk-size 1024
+    run_cascade_ok(&[
+        "-A",
+        "--chunk-size", "1024",
+        "-i", input.to_str().unwrap(),
+        "-o", encrypted.to_str().unwrap(),
+        "--keyfile", keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+
+    // Decrypt
+    run_cascade_ok(&[
+        "-d",
+        "-i", encrypted.to_str().unwrap(),
+        "-o", decrypted.to_str().unwrap(),
+        "--keyfile", keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+
+    let result = fs::read(&decrypted).unwrap();
+    assert_eq!(data, result, "Chunked roundtrip data mismatch");
+
+    cleanup(&[input, encrypted, decrypted, keyfile]);
+}
+
+#[test]
+fn test_chunked_single_chunk() {
+    // File smaller than chunk size — still produces v9 chunked header
+    let data = b"Small file for single-chunk test";
+    let input = create_temp_file("chunked_single_input.txt", data);
+    let encrypted = create_temp_file("chunked_single_encrypted.bin", b"");
+    let decrypted = create_temp_file("chunked_single_decrypted.txt", b"");
+    let keyfile = create_keyfile();
+
+    run_cascade_ok(&[
+        "-A", "-S",
+        "--chunk-size", "65536",
+        "-i", input.to_str().unwrap(),
+        "-o", encrypted.to_str().unwrap(),
+        "--keyfile", keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+
+    // Verify it's a v9 header
+    let enc_data = fs::read(&encrypted).unwrap();
+    assert!(
+        enc_data.starts_with(b"[CCRYPT|9|"),
+        "Expected v9 chunked header, got: {:?}",
+        String::from_utf8_lossy(&enc_data[..20.min(enc_data.len())])
+    );
+
+    run_cascade_ok(&[
+        "-d",
+        "-i", encrypted.to_str().unwrap(),
+        "-o", decrypted.to_str().unwrap(),
+        "--keyfile", keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+
+    let result = fs::read(&decrypted).unwrap();
+    assert_eq!(data.as_slice(), result.as_slice());
+
+    cleanup(&[input, encrypted, decrypted, keyfile]);
+}
+
+#[test]
+fn test_chunked_tamper_detection() {
+    let data = b"Tamper detection test for chunked E2E";
+    let input = create_temp_file("chunked_tamper_input.txt", data);
+    let encrypted = create_temp_file("chunked_tamper_encrypted.bin", b"");
+    let decrypted = create_temp_file("chunked_tamper_decrypted.txt", b"");
+    let keyfile = create_keyfile();
+
+    run_cascade_ok(&[
+        "-A",
+        "--chunk-size", "16",
+        "-i", input.to_str().unwrap(),
+        "-o", encrypted.to_str().unwrap(),
+        "--keyfile", keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+
+    // Tamper with last byte of encrypted file
+    let mut enc_data = fs::read(&encrypted).unwrap();
+    let len = enc_data.len();
+    enc_data[len - 1] ^= 0xFF;
+    fs::write(&encrypted, &enc_data).unwrap();
+
+    // Decrypt should fail
+    run_cascade_fail(&[
+        "-d",
+        "-i", encrypted.to_str().unwrap(),
+        "-o", decrypted.to_str().unwrap(),
+        "--keyfile", keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+
+    cleanup(&[input, encrypted, decrypted, keyfile]);
+}
+
+#[test]
+fn test_chunked_multi_algorithm() {
+    let data: Vec<u8> = (0..=255).cycle().take(2048).collect();
+    let input = create_temp_file("chunked_multi_input.bin", &data);
+    let encrypted = create_temp_file("chunked_multi_encrypted.bin", b"");
+    let decrypted = create_temp_file("chunked_multi_decrypted.bin", b"");
+    let keyfile = create_keyfile();
+
+    // Three-algorithm cascade with chunking
+    run_cascade_ok(&[
+        "-A", "-S", "-C",
+        "--chunk-size", "512",
+        "-i", input.to_str().unwrap(),
+        "-o", encrypted.to_str().unwrap(),
+        "--keyfile", keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+
+    run_cascade_ok(&[
+        "-d",
+        "-i", encrypted.to_str().unwrap(),
+        "-o", decrypted.to_str().unwrap(),
+        "--keyfile", keyfile.to_str().unwrap(),
+        "-s",
+    ]);
+
+    let result = fs::read(&decrypted).unwrap();
+    assert_eq!(data, result, "Chunked multi-algorithm roundtrip failed");
+
+    cleanup(&[input, encrypted, decrypted, keyfile]);
+}
+
+#[test]
+fn test_chunked_wrong_password() {
+    let data = b"Wrong password chunked test";
+    let input = create_temp_file("chunked_wp_input.txt", data);
+    let encrypted = create_temp_file("chunked_wp_encrypted.bin", b"");
+    let decrypted = create_temp_file("chunked_wp_decrypted.txt", b"");
+    let keyfile_enc = create_keyfile();
+    let keyfile_dec = create_temp_file("chunked_wp_wrong.key", b"wrongpassword!!!");
+
+    run_cascade_ok(&[
+        "-A",
+        "--chunk-size", "16",
+        "-i", input.to_str().unwrap(),
+        "-o", encrypted.to_str().unwrap(),
+        "--keyfile", keyfile_enc.to_str().unwrap(),
+        "-s",
+    ]);
+
+    run_cascade_fail(&[
+        "-d",
+        "-i", encrypted.to_str().unwrap(),
+        "-o", decrypted.to_str().unwrap(),
+        "--keyfile", keyfile_dec.to_str().unwrap(),
+        "-s",
+    ]);
+
+    cleanup(&[input, encrypted, decrypted, keyfile_enc, keyfile_dec]);
+}

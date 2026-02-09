@@ -1,5 +1,6 @@
 pub mod buffer;
 pub mod cascade;
+pub mod chunked;
 pub mod crypto;
 pub mod encoder;
 pub mod header;

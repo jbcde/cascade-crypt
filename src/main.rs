@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use rand::seq::SliceRandom;
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
@@ -61,9 +61,9 @@ fn expand_combined_flags(args: Vec<String>) -> Vec<String> {
 }
 
 use cascrypt::{
-    buffer::detect_cow_filesystem, decrypt_protected_with_buffer_mode, decrypt_with_buffer_mode,
-    encrypt_protected_with_buffer_mode, encrypt_with_buffer_mode, Algorithm, BufferMode,
-    HybridKeypair, HybridPrivateKey, HybridPublicKey,
+    buffer::detect_cow_filesystem, chunked, decrypt_protected_with_buffer_mode,
+    decrypt_with_buffer_mode, encrypt_protected_with_buffer_mode, encrypt_with_buffer_mode,
+    Algorithm, BufferMode, HybridKeypair, HybridPrivateKey, HybridPublicKey,
 };
 
 const ALL_ALGORITHMS: [Algorithm; 20] = [
@@ -100,6 +100,7 @@ struct Cli {
     lock: bool,
     list: bool,
     buffer_mode: Option<String>,
+    chunk_size: Option<usize>,
     algorithms: Vec<Algorithm>,
     input: Option<PathBuf>,
     output: Option<PathBuf>,
@@ -154,6 +155,7 @@ OPTIONS:
         --lock               Engage puzzle lock (requires --pubkey)
         --list               List all available algorithms and exit
         --buffer <MODE>      Buffer mode: ram, disk, or auto (default)
+        --chunk-size <BYTES> Force chunked encryption with given chunk size
     -i, --input <FILE>       Input file (use '-' for stdin)
     -o, --output <FILE>      Output file (use '-' for stdout)
         --keyfile <FILE>     Read key from file
@@ -247,6 +249,7 @@ fn parse_cli(args: Vec<String>) -> Result<Cli> {
         lock: false,
         list: false,
         buffer_mode: None,
+        chunk_size: None,
         algorithms: Vec::new(),
         input: None,
         output: None,
@@ -309,6 +312,13 @@ fn parse_cli(args: Vec<String>) -> Result<Cli> {
             }
             "--buffer" => {
                 cli.buffer_mode = Some(take_value(&args, &mut i, "--buffer")?);
+            }
+            "--chunk-size" => {
+                let val = take_value(&args, &mut i, "--chunk-size")?;
+                cli.chunk_size = Some(
+                    val.parse::<usize>()
+                        .map_err(|_| anyhow::anyhow!("--chunk-size requires a byte count, got: {}", val))?,
+                );
             }
             // Algorithm short flags (single char after -)
             s if s.starts_with('-') && !s.starts_with("--") && s.len() == 2 => {
@@ -603,17 +613,69 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
         }
     }
 
-    // Read input
-    let input_data = read_input(&input)?;
-
-    // Get password
+    // Get password before reading input (needed for both chunked and non-chunked)
     let password = get_password(&cli)?;
-
     let show_progress = cli.progress && !cli.silent;
+    let is_stdin = input.as_os_str() == "-";
+    let is_stdout = output.as_os_str() == "-";
 
-    let output_data = if cli.decrypt {
-        // Decrypt mode - algorithm order is in the header
-        if let Some(privkey_path) = &cli.privkey {
+    if cli.decrypt {
+        // === DECRYPT PATH ===
+
+        // For file input, peek at header to detect chunked format
+        if !is_stdin {
+            let mut file = fs::File::open(&input)
+                .with_context(|| format!("Failed to open input: {}", input.display()))?;
+            let mut peek = [0u8; 16];
+            let n = file.read(&mut peek).context("Failed to read input")?;
+
+            if peek[..n].starts_with(b"[CCRYPT|9|") || peek[..n].starts_with(b"[CCRYPT|10|") {
+                // Chunked decrypt — streaming, no full-file load
+                file.seek(io::SeekFrom::Start(0)).context("Failed to seek input")?;
+                let private_key = cli.privkey.as_ref()
+                    .map(|p| load_private_key(p))
+                    .transpose()?;
+
+                if !cli.silent {
+                    eprintln!("󰌊 Decrypting chunked file...");
+                }
+
+                if is_stdout {
+                    let mut stdout = io::stdout();
+                    chunked::decrypt_chunked(
+                        &mut file,
+                        &mut stdout,
+                        &password,
+                        buffer_mode,
+                        private_key.as_ref(),
+                        make_progress_cb(show_progress, "󰌊 Decrypting chunk"),
+                    )
+                    .context("Chunked decryption failed")?;
+                } else {
+                    let mut out_file = fs::File::create(&output)
+                        .with_context(|| format!("Failed to create output: {}", output.display()))?;
+                    chunked::decrypt_chunked(
+                        &mut file,
+                        &mut out_file,
+                        &password,
+                        buffer_mode,
+                        private_key.as_ref(),
+                        make_progress_cb(show_progress, "󰌊 Decrypting chunk"),
+                    )
+                    .context("Chunked decryption failed")?;
+                }
+
+                finish_progress(show_progress);
+                if !cli.silent {
+                    eprintln!("✓ Decryption complete.");
+                }
+                return Ok(());
+            }
+        }
+
+        // Non-chunked decrypt (existing path)
+        let input_data = read_input(&input)?;
+        let output_data = if let Some(privkey_path) = &cli.privkey {
             let private_key = load_private_key(privkey_path)?;
             if !cli.silent {
                 eprintln!("󰦝 Decrypting with protected header...");
@@ -638,11 +700,16 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             .context("Decryption failed")?;
             finish_progress(show_progress);
             result
+        };
+        write_output(&output, &output_data)?;
+        if !cli.silent {
+            eprintln!("✓ Decryption complete.");
         }
     } else {
-        // Encrypt mode - get algorithms
+        // === ENCRYPT PATH ===
+
+        // Resolve algorithms first (needed for both chunked and non-chunked)
         let algorithms = if let Some(count) = cli.random_count {
-            // Random mode - check for conflicting flags
             if !cli.algorithms.is_empty() {
                 anyhow::bail!(
                     "Cannot use -n/--random with individual algorithm flags.\n\
@@ -668,6 +735,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             cli.algorithms
         };
 
+        // Print algorithm info and warnings
         let algo_count = algorithms.len();
         if !cli.silent {
             eprintln!(
@@ -687,13 +755,11 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
                     String::new()
                 }
             );
-            // Warn if outer layer lacks authentication
             if let Some(last) = algorithms.last() {
                 if !is_aead(*last) {
                     eprintln!("󰀦 Warning: Outer layer ({}) is not AEAD - consider ending with -A, -C, -X, or -N for authentication", last.name());
                 }
             }
-            // Warn about 64-bit block ciphers (birthday attack vulnerability)
             let weak_ciphers: Vec<_> = algorithms.iter().filter(|a| is_64bit_block(**a)).collect();
             if !weak_ciphers.is_empty() {
                 let names: Vec<_> = weak_ciphers.iter().map(|a| a.name()).collect();
@@ -703,51 +769,114 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             }
         }
 
-        if let Some(pubkey_path) = &cli.pubkey {
-            let public_key = load_public_key(pubkey_path)?;
+        // Determine if chunked encryption should be used
+        let effective_chunk_size = if let Some(cs) = cli.chunk_size {
+            // Explicit --chunk-size
+            if is_stdin {
+                anyhow::bail!("--chunk-size requires file input (not stdin)");
+            }
+            if is_stdout {
+                anyhow::bail!("Chunked encryption requires file output (not stdout)");
+            }
+            Some(cs)
+        } else if !is_stdin && !is_stdout {
+            // Auto-detect based on file size vs available RAM
+            let meta = fs::metadata(&input)
+                .with_context(|| format!("Failed to stat input: {}", input.display()))?;
+            chunked::should_chunk(meta.len())
+        } else {
+            None
+        };
+
+        if let Some(chunk_size) = effective_chunk_size {
+            // Chunked encrypt — streaming, seekable output
+            let file_size = fs::metadata(&input)
+                .with_context(|| format!("Failed to stat input: {}", input.display()))?
+                .len();
+            let mut in_file = fs::File::open(&input)
+                .with_context(|| format!("Failed to open input: {}", input.display()))?;
+            let mut out_file = fs::File::create(&output)
+                .with_context(|| format!("Failed to create output: {}", output.display()))?;
+
+            let pubkey = cli.pubkey.as_ref()
+                .map(|p| load_public_key(p))
+                .transpose()?;
+
             if !cli.silent {
-                if cli.lock {
-                    eprintln!("󰌾 Using protected header with puzzle lock 󱡅");
-                } else {
+                let chunk_mb = chunk_size as f64 / (1024.0 * 1024.0);
+                let chunks = if file_size == 0 { 1 } else {
+                    ((file_size as usize) + chunk_size - 1) / chunk_size
+                };
+                eprintln!("󰌆 Chunked mode: {} chunks of {:.1} MiB", chunks, chunk_mb);
+                if pubkey.is_some() {
                     eprintln!("󰦝 Using protected header (hybrid X25519+ML-KEM encryption)");
                 }
             }
-            let result = encrypt_protected_with_buffer_mode(
-                &input_data,
+
+            if cli.lock {
+                anyhow::bail!("--lock is not supported with chunked encryption");
+            }
+
+            chunked::encrypt_chunked(
+                &mut in_file,
+                &mut out_file,
                 &password,
                 &algorithms,
-                &public_key,
-                cli.lock,
+                chunk_size,
+                file_size,
+                false,
                 buffer_mode,
-                make_progress_cb(show_progress, "󰌆 Encrypting"),
+                pubkey.as_ref(),
+                make_progress_cb(show_progress, "󰌆 Encrypting chunk"),
             )
-            .context("Encryption failed")?;
+            .context("Chunked encryption failed")?;
             finish_progress(show_progress);
-            Zeroizing::new(result)
-        } else if cli.lock {
-            anyhow::bail!("--lock requires --pubkey for protected header encryption");
+            if !cli.silent {
+                eprintln!("✓ Encryption complete.");
+            }
         } else {
-            let result = encrypt_with_buffer_mode(
-                &input_data,
-                &password,
-                &algorithms,
-                buffer_mode,
-                make_progress_cb(show_progress, "󰌆 Encrypting"),
-            )
-            .context("Encryption failed")?;
-            finish_progress(show_progress);
-            Zeroizing::new(result)
-        }
-    };
+            // Non-chunked encrypt (existing path)
+            let input_data = read_input(&input)?;
 
-    // Write output
-    write_output(&output, &output_data)?;
-
-    if !cli.silent {
-        if cli.decrypt {
-            eprintln!("✓ Decryption complete.");
-        } else {
-            eprintln!("✓ Encryption complete.");
+            let output_data = if let Some(pubkey_path) = &cli.pubkey {
+                let public_key = load_public_key(pubkey_path)?;
+                if !cli.silent {
+                    if cli.lock {
+                        eprintln!("󰌾 Using protected header with puzzle lock 󱡅");
+                    } else {
+                        eprintln!("󰦝 Using protected header (hybrid X25519+ML-KEM encryption)");
+                    }
+                }
+                let result = encrypt_protected_with_buffer_mode(
+                    &input_data,
+                    &password,
+                    &algorithms,
+                    &public_key,
+                    cli.lock,
+                    buffer_mode,
+                    make_progress_cb(show_progress, "󰌆 Encrypting"),
+                )
+                .context("Encryption failed")?;
+                finish_progress(show_progress);
+                Zeroizing::new(result)
+            } else if cli.lock {
+                anyhow::bail!("--lock requires --pubkey for protected header encryption");
+            } else {
+                let result = encrypt_with_buffer_mode(
+                    &input_data,
+                    &password,
+                    &algorithms,
+                    buffer_mode,
+                    make_progress_cb(show_progress, "󰌆 Encrypting"),
+                )
+                .context("Encryption failed")?;
+                finish_progress(show_progress);
+                Zeroizing::new(result)
+            };
+            write_output(&output, &output_data)?;
+            if !cli.silent {
+                eprintln!("✓ Encryption complete.");
+            }
         }
     }
 

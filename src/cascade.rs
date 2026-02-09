@@ -67,7 +67,7 @@ impl From<ProcessError<CryptoError>> for CascadeError {
     }
 }
 
-fn derive_key(
+pub(crate) fn derive_key(
     password: &[u8],
     salt: &[u8],
     algo: Algorithm,
@@ -95,7 +95,7 @@ fn derive_key(
 }
 
 /// Derive keys for each layer in parallel (unique key per layer position)
-fn derive_keys_parallel(
+pub(crate) fn derive_keys_parallel(
     password: &[u8],
     salt: &[u8],
     algorithms: &[Algorithm],
@@ -108,7 +108,7 @@ fn derive_keys_parallel(
         .collect()
 }
 
-fn encrypt_layers<F>(
+pub(crate) fn encrypt_layers<F>(
     data: &[u8],
     password: &[u8],
     algorithms: &[Algorithm],
@@ -355,7 +355,7 @@ where
     decrypt_layers(&header, encrypted_data, password, buffer_mode, progress)
 }
 
-fn decrypt_layers<F>(
+pub(crate) fn decrypt_layers<F>(
     header: &Header,
     encrypted_data: &[u8],
     password: &[u8],
