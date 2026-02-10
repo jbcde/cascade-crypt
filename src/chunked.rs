@@ -83,22 +83,38 @@ where
         ((file_size as usize) + chunk_size - 1) / chunk_size
     };
 
-    // Write placeholder header — we'll seek back to overwrite with final hash
+    // Write placeholder header — we'll seek back to overwrite with final hash.
+    // For encrypted headers (v10), the serialized size varies due to random
+    // ephemeral keys producing JSON byte arrays of different decimal widths.
+    // We pad the placeholder with extra space to guarantee the final header fits.
     let placeholder_header = Header::with_chunks(
         algorithms.to_vec(),
         Argon2Params::default(),
         chunk_count as u64,
         [0u8; 32], // placeholder hash
     );
+    let is_encrypted_header = pubkey.is_some();
     let header_str = if let Some(pk) = pubkey {
         placeholder_header.serialize_encrypted(pk)?
     } else {
         placeholder_header.serialize()
     };
-    let header_len = header_str.len();
-    output
-        .write_all(header_str.as_bytes())
-        .map_err(CascadeError::Io)?;
+    // For v10, add 1024 null bytes after the header to absorb size variance
+    // on rewrite. The parser finds the first \n and ignores anything after it
+    // until the chunk frames start at the reserved offset.
+    let header_len = if is_encrypted_header {
+        let padded_len = header_str.len() + 1024;
+        let mut padded = header_str.into_bytes();
+        padded.resize(padded_len, 0u8); // null padding after "]\n"
+        output.write_all(&padded).map_err(CascadeError::Io)?;
+        padded_len
+    } else {
+        let len = header_str.len();
+        output
+            .write_all(header_str.as_bytes())
+            .map_err(CascadeError::Io)?;
+        len
+    };
 
     // Read and encrypt each chunk incrementally
     let mut hasher = Sha256::new();
@@ -147,16 +163,16 @@ where
     output
         .seek(SeekFrom::Start(0))
         .map_err(CascadeError::Io)?;
-    let padded = final_header_str.into_bytes();
-    // For v9 plaintext headers, the hash field is always 64 hex chars,
-    // so placeholder and final headers are exactly the same size.
-    if padded.len() != header_len {
+    let mut final_bytes = final_header_str.into_bytes();
+    if final_bytes.len() > header_len {
         return Err(CascadeError::Io(std::io::Error::new(
             std::io::ErrorKind::Other,
-            "Header size mismatch on rewrite — encrypted chunked headers not yet supported",
+            "Final header exceeds reserved space — this is a bug",
         )));
     }
-    output.write_all(&padded).map_err(CascadeError::Io)?;
+    // Pad with null bytes after "]\n" to fill the reserved space exactly
+    final_bytes.resize(header_len, 0u8);
+    output.write_all(&final_bytes).map_err(CascadeError::Io)?;
 
     Ok(())
 }
@@ -205,6 +221,20 @@ where
     let chunk_count = header
         .chunk_count
         .ok_or(HeaderError::InvalidFormat)? as usize;
+
+    // Skip null padding after header (v10 encrypted headers use padding
+    // to reserve fixed space for the header rewrite)
+    loop {
+        let buf = reader.fill_buf().map_err(CascadeError::Io)?;
+        if buf.is_empty() {
+            break;
+        }
+        let skip = buf.iter().take_while(|&&b| b == 0).count();
+        if skip == 0 {
+            break;
+        }
+        reader.consume(skip);
+    }
 
     // Single-pass: read, hash, and decrypt each frame
     let mut hasher = Sha256::new();
@@ -471,5 +501,49 @@ mod tests {
             |_, _| {},
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_chunked_encrypted_header_roundtrip() {
+        use crate::hybrid::HybridKeypair;
+
+        let data = b"Chunked encryption with v10 encrypted header";
+        let password = random_password();
+        let algorithms = vec![Algorithm::Aes256, Algorithm::ChaCha20Poly1305];
+        let keypair = HybridKeypair::generate();
+
+        let mut input = Cursor::new(data.as_slice());
+        let mut encrypted = Cursor::new(Vec::new());
+        encrypt_chunked(
+            &mut input,
+            &mut encrypted,
+            &password,
+            &algorithms,
+            16,
+            data.len() as u64,
+            false,
+            BufferMode::Ram,
+            Some(&keypair.public),
+            |_, _| {},
+        )
+        .unwrap();
+
+        let encrypted_bytes = encrypted.into_inner();
+        // Verify it's a v10 header
+        assert!(encrypted_bytes.starts_with(b"[CCRYPT|10|E|"));
+
+        let mut reader = Cursor::new(encrypted_bytes.as_slice());
+        let mut decrypted = Vec::new();
+        decrypt_chunked(
+            &mut reader,
+            &mut decrypted,
+            &password,
+            BufferMode::Ram,
+            Some(&keypair.private),
+            |_, _| {},
+        )
+        .unwrap();
+
+        assert_eq!(data.as_slice(), decrypted.as_slice());
     }
 }

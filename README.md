@@ -15,7 +15,7 @@ Cascading binary encryption tool with user-controlled algorithm ordering. Encryp
 - **Auto-decryption** - header stores algorithm order, decryption reverses automatically
 - **Argon2id key derivation** - unique keys derived per algorithm layer
 - **SHA-256 integrity** - header hash detects tampering
-- **Hybrid header protection** - optional X25519 + ML-KEM-1024 encryption hides algorithm order
+- **Header encryption** - `--pubkey` activates X25519 + ML-KEM-1024 post-quantum encryption to hide algorithm order
 
 ## Installation
 
@@ -121,11 +121,13 @@ Size suffixes: `k` (kilobytes), `m` (megabytes), `g` (gigabytes). Case-insensiti
 - A SHA-256 hash over all chunk frames is stored in the header and verified after decryption
 - Tampering with any chunk, or reordering chunks, is detected
 
-## Hybrid Header Protection
+## Header Encryption (`--pubkey`)
 
-By default, the header exposes which algorithms were used (though not the password or keys). For maximum security, you can encrypt the header itself using hybrid asymmetric encryption.
+Without `--pubkey`, the file header is plaintext. Anyone can see which algorithms were used, the Argon2 parameters, and the chunk count. Your data is still protected by the password — the header just isn't secret.
 
-### Why?
+Passing `--pubkey` encrypts the header using hybrid post-quantum asymmetric encryption (X25519 + ML-KEM-1024). This is the only way to activate the post-quantum cryptography in cascrypt. Without it, there is no asymmetric encryption involved at all.
+
+### Why encrypt the header?
 
 With a plaintext header, an attacker knows they need to break AES → Serpent → ChaCha20. With an encrypted header, they don't even know which of the 6+ billion possible algorithm combinations to attack.
 
