@@ -226,6 +226,7 @@ cascrypt -d --privkey my.keypair -i secret.enc -o secret.bin
 
 The puzzle lock:
 - Requires `--pubkey` (only works with protected headers)
+- Is **not compatible with chunked encryption** (`--chunk` or auto-chunking)
 - Is **not encryption** and provides no cryptographic security
 - Applies a reversible transformation to the encrypted output
 - Cannot be reversed without the matching private key

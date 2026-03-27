@@ -2,13 +2,13 @@
 
 Cascading binary encryption tool with user-controlled algorithm ordering. Encrypt files through multiple layers of encryption, applied in the order you specify.
 
-> **v0.6.1 Breaking Change:** The encoder length prefix has been widened from 4 bytes to 8 bytes, removing the 4 GiB file size limit. Files encrypted with v0.6.0 or earlier must be decrypted with the prior version before upgrading. See [CHANGELOG.md](CHANGELOG.md) for details.
+> **v0.7.0 Breaking Changes:** Chunked encryption now uses per-chunk HMAC-SHA256 authentication (header versions v11/v12). Files encrypted with v0.7.0-unstable chunked format (v9/v10) must be re-encrypted. Non-chunked files (v7/v8) are unaffected. The v0.6.1 encoder change (8-byte length prefix) also remains — files from v0.6.0 or earlier must be decrypted with the prior version first. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## Features
 
 - **20 symmetric ciphers** - mix and match in any order
 - **Cascading encryption** - algorithms applied sequentially in command-line order
-- **Chunked mode** - encrypt files of any size without exceeding available memory
+- **Chunked mode** - encrypt files of any size without exceeding available memory, with per-chunk HMAC authentication
 - **Combined flags** - use `-ASC` instead of `-A -S -C` for convenience
 - **Random mode** - randomly select N algorithms (with duplicates) for unpredictable layering
 - **Silent mode** - suppress all output for operational security
@@ -118,8 +118,14 @@ Size suffixes: `k` (kilobytes), `m` (megabytes), `g` (gigabytes). Case-insensiti
 ### Security properties
 
 - Each chunk derives its own key material from a unique random 32-byte salt via Argon2id
-- A SHA-256 hash over all chunk frames is stored in the header and verified after decryption
-- Tampering with any chunk, or reordering chunks, is detected
+- **Per-chunk HMAC-SHA256** authentication — each chunk frame carries an HMAC tag that is verified *before* decryption, so tampered chunks never produce plaintext output. The HMAC binds the chunk index, frame length, salt, and ciphertext, preventing tampering, reordering, and length manipulation.
+- A SHA-256 hash over all chunk frames is stored in the header and verified after decryption to detect truncation
+- Frame size is capped at available memory to prevent OOM from crafted inputs
+
+### Limitations
+
+- `--lock` (puzzle lock) is not compatible with chunked encryption
+- Chunked encryption requires file I/O (not stdin/stdout) since the header is finalized after all chunks are written
 
 ## Header Encryption (`--pubkey`)
 
@@ -198,20 +204,22 @@ Error: Encrypted header requires private key
 - **Encrypted payload**: Algorithm codes + salt encrypted with ChaCha20-Poly1305 (base64)
 - **SHA-256**: Hash of encrypted components
 
-### Version 9 (Chunked, Plaintext Header)
+### Version 11 (Chunked, Plaintext Header)
 ```
-[CCRYPT|9|<algo_codes>|<argon2_params>|<chunk_count>|<full_hash>|<header_hash>]
+[CCRYPT|11|<algo_codes>|<argon2_params>|<chunk_count>|<full_hash>|<header_hash>]
 <chunk_frame_0><chunk_frame_1>...
 ```
 
-- **Version**: 9
+- **Version**: 11
 - **Chunk count**: Number of chunk frames following the header
-- **Full hash**: SHA-256 of all concatenated chunk frames
-- Each chunk frame: `[8-byte LE length][32-byte salt][ciphertext]`
+- **Full hash**: SHA-256 of all concatenated chunk frames (detects truncation)
+- Each chunk frame: `[8-byte LE length][32-byte salt][32-byte HMAC][ciphertext]`
+- HMAC key derived via HKDF-SHA256 from password + chunk salt
+- HMAC binds chunk index, frame length, salt, and ciphertext
 
-### Version 10 (Chunked, Encrypted Header)
+### Version 12 (Chunked, Encrypted Header)
 
-Same as v8 with `chunk_count` added to the encrypted payload. Chunk frames follow the header in the same format as v9.
+Same as v8 with `chunk_count` added to the encrypted payload. Chunk frames follow the header in the same format as v11.
 
 ## Examples
 
@@ -249,14 +257,15 @@ cascrypt -s -d -i secret.enc -o secret.bin
 - **Argon2id** derives unique 256-bit keys per algorithm from master password
 - **Random salt** ensures identical files encrypt differently
 - **AEAD ciphers** (AES-GCM, ChaCha20-Poly1305, XChaCha20-Poly1305, Ascon) provide authentication
+- **Per-chunk HMAC** in chunked mode verifies integrity before decryption — tampered chunks never produce plaintext
 - **Hybrid encryption** combines classical and post-quantum security for header protection
+- **Cross-platform** auto-chunking works on Linux, macOS, and Windows
 - **Quantum resistance**: Grover's algorithm halves effective key strength. 256-bit ciphers remain secure (128-bit post-quantum). Avoid using *only* 128-bit ciphers (`-F -I -4 -E -6 -J -N`) if quantum resistance matters—include at least one 256-bit cipher in your cascade.
 
 ## Limitations
 
 - **Non-chunked mode memory usage: ~2-3x file size** — Multi-layer encryption requires the input plus intermediate buffers. `--buffer=disk` offloads intermediate layers to temp files, but the initial read and final write remain in RAM.
 - **Chunked mode** avoids this — memory stays proportional to chunk size. Activates automatically for large files or manually with `--chunk`.
-- Chunked encryption requires file I/O (not stdin/stdout) since the header is finalized after all chunks are written.
 
 ## Performance
 

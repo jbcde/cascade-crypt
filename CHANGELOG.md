@@ -4,7 +4,7 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.7.0-unstable] - 2026-03-27
+## [0.7.0] - 2026-03-27
 
 ### Added
 - **Chunked encryption** for files that exceed available memory. Files are split into fixed-size pieces, each encrypted independently through the full algorithm cascade with its own Argon2id-derived key from a unique random salt. A SHA-256 hash over all chunk frames is verified on decryption.
@@ -24,7 +24,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Per-chunk HMAC-SHA256** authentication: each chunk frame carries an HMAC tag verified before decryption, preventing plaintext emission for tampered chunks. HMAC key derived via HKDF-SHA256 from password + chunk salt. HMAC binds chunk index, frame length, salt, and ciphertext — prevents tampering, reordering, and length manipulation. Full-file SHA-256 hash retained for truncation detection.
 - Chunked hash verification uses constant-time comparison (`subtle::ConstantTimeEq`) to prevent timing side channels
 - Bounded header read in chunked decryption (64 KiB cap) prevents DoS from missing newline
-- Frame length capped at 8 GiB (`MAX_FRAME_LEN`) to prevent OOM from crafted inputs
+- Frame length capped at the lesser of available memory and 8 GiB to prevent OOM from crafted inputs
 - Chunk count validated against `MAX_CHUNK_COUNT` to prevent DoS from attacker-controlled headers
 - Chunk count arithmetic uses checked conversion (`usize::try_from`) instead of `as` cast
 - Output file deleted on hash verification failure to avoid leaving unverified plaintext on disk

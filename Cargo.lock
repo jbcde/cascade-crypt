@@ -176,7 +176,7 @@ dependencies = [
 
 [[package]]
 name = "cascrypt"
-version = "0.7.0-unstable"
+version = "0.7.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
