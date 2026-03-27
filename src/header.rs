@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -139,7 +140,7 @@ impl Header {
     ) -> Self {
         Self {
             algorithms,
-            salt: [0u8; 32], // unused — each chunk carries its own salt
+            salt: rand::thread_rng().gen(),
             locked: false,
             ciphertext_hash: Some(full_hash),
             argon2_params,
@@ -289,7 +290,7 @@ impl Header {
                 let ciphertext_hash = parse_hash(parts[5])?;
                 let header = Self {
                     algorithms,
-                    salt: [0u8; 32], // unused — each chunk carries its own salt
+                    salt: rand::thread_rng().gen(),
                     locked: false,
                     ciphertext_hash: Some(ciphertext_hash),
                     argon2_params,
