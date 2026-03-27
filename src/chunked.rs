@@ -1,6 +1,7 @@
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use subtle::ConstantTimeEq;
 use zeroize::Zeroizing;
 
 use crate::buffer::BufferMode;
@@ -11,6 +12,13 @@ use crate::hybrid::{HybridPrivateKey, HybridPublicKey};
 
 const SALT_LEN: usize = 32;
 const FRAME_PREFIX_LEN: usize = 8; // u64 LE chunk length
+/// Hard cap on a single chunk frame to prevent OOM from crafted frame_len.
+/// 8 GiB is far beyond any reasonable chunk size.
+const MAX_FRAME_LEN: u64 = 8 * 1024 * 1024 * 1024;
+/// Maximum header size to prevent unbounded allocation from read_until.
+const MAX_HEADER_LEN: usize = 64 * 1024;
+/// Maximum chunk count to prevent DoS from attacker-controlled headers.
+const MAX_CHUNK_COUNT: u64 = u32::MAX as u64;
 
 /// Check whether a file should be chunked based on available RAM.
 /// Returns `Some(chunk_size)` if `file_size > 3/4 * available_ram`, else `None`.
@@ -78,9 +86,15 @@ where
     }
 
     let chunk_count = if file_size == 0 {
-        1
+        1usize
     } else {
-        ((file_size as usize) + chunk_size - 1) / chunk_size
+        let count_u64 = (file_size + chunk_size as u64 - 1) / chunk_size as u64;
+        usize::try_from(count_u64).map_err(|_| {
+            CascadeError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Chunk count overflows usize",
+            ))
+        })?
     };
 
     // Write placeholder header — we'll seek back to overwrite with final hash.
@@ -181,12 +195,16 @@ where
 ///
 /// Reads frame-by-frame from `input`, keeping memory proportional to one chunk
 /// at a time. Hash integrity is verified after all frames are processed.
+///
+/// If `output_path` is provided and hash verification fails, the output file
+/// is deleted to avoid leaving unverified plaintext on disk.
 pub fn decrypt_chunked<R, W, F>(
     input: &mut R,
     output: &mut W,
     password: &[u8],
     buffer_mode: BufferMode,
     private_key: Option<&HybridPrivateKey>,
+    output_path: Option<&std::path::Path>,
     mut progress: F,
 ) -> Result<(), CascadeError>
 where
@@ -194,17 +212,30 @@ where
     W: Write,
     F: FnMut(usize, usize),
 {
-    // Read header line (everything up to and including '\n')
+    // Read header line with bounded length to prevent DoS from missing newline
     let mut reader = BufReader::new(input);
     let mut header_bytes = Vec::with_capacity(4096);
-    reader
-        .read_until(b'\n', &mut header_bytes)
-        .map_err(CascadeError::Io)?;
-    if header_bytes.is_empty() || header_bytes.last() != Some(&b'\n') {
-        return Err(CascadeError::Io(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "EOF before header newline",
-        )));
+    loop {
+        let available = reader.fill_buf().map_err(CascadeError::Io)?;
+        if available.is_empty() {
+            return Err(CascadeError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "EOF before header newline",
+            )));
+        }
+        let newline_pos = available.iter().position(|&b| b == b'\n');
+        let take = newline_pos.map(|p| p + 1).unwrap_or(available.len());
+        header_bytes.extend_from_slice(&available[..take]);
+        reader.consume(take);
+        if newline_pos.is_some() {
+            break;
+        }
+        if header_bytes.len() > MAX_HEADER_LEN {
+            return Err(CascadeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Header exceeds {} bytes without newline", MAX_HEADER_LEN),
+            )));
+        }
     }
 
     // Parse header
@@ -218,9 +249,15 @@ where
         Header::parse(&header_bytes)?
     };
 
-    let chunk_count = header
-        .chunk_count
-        .ok_or(HeaderError::InvalidFormat)? as usize;
+    let chunk_count_u64 = header.chunk_count.ok_or(HeaderError::InvalidFormat)?;
+    if chunk_count_u64 == 0 || chunk_count_u64 > MAX_CHUNK_COUNT {
+        return Err(CascadeError::Crypto(
+            crate::crypto::CryptoError::DecryptionFailed(
+                format!("Invalid chunk count: {} (max {})", chunk_count_u64, MAX_CHUNK_COUNT),
+            ),
+        ));
+    }
+    let chunk_count = chunk_count_u64 as usize;
 
     // Skip null padding after header (v10 encrypted headers use padding
     // to reserve fixed space for the header rewrite)
@@ -244,15 +281,23 @@ where
         reader
             .read_exact(&mut frame_len_bytes)
             .map_err(CascadeError::Io)?;
-        let frame_len = u64::from_le_bytes(frame_len_bytes) as usize;
+        let frame_len_u64 = u64::from_le_bytes(frame_len_bytes);
 
-        if frame_len < SALT_LEN {
+        if frame_len_u64 < SALT_LEN as u64 {
             return Err(CascadeError::Crypto(
                 crate::crypto::CryptoError::DecryptionFailed(
                     "Chunk frame too small for salt".into(),
                 ),
             ));
         }
+        if frame_len_u64 > MAX_FRAME_LEN {
+            return Err(CascadeError::Crypto(
+                crate::crypto::CryptoError::DecryptionFailed(
+                    format!("Chunk frame too large: {} bytes (max {})", frame_len_u64, MAX_FRAME_LEN),
+                ),
+            ));
+        }
+        let frame_len = frame_len_u64 as usize;
 
         // Read frame data (salt + ciphertext)
         let mut frame_data = vec![0u8; frame_len];
@@ -290,7 +335,11 @@ where
     let expected_hash = header
         .ciphertext_hash
         .ok_or(HeaderError::MissingCiphertextHash)?;
-    if computed_hash != expected_hash {
+    if computed_hash.ct_eq(&expected_hash).unwrap_u8() != 1 {
+        // Delete output file to avoid leaving unverified plaintext on disk
+        if let Some(path) = output_path {
+            let _ = std::fs::remove_file(path);
+        }
         return Err(CascadeError::Header(HeaderError::CiphertextHashMismatch));
     }
 
@@ -340,6 +389,7 @@ mod tests {
             &password,
             BufferMode::Ram,
             None,
+            None,
             |_, _| {},
         )
         .unwrap();
@@ -381,6 +431,7 @@ mod tests {
             &password,
             BufferMode::Ram,
             None,
+            None,
             |_, _| {},
         )
         .unwrap();
@@ -418,6 +469,7 @@ mod tests {
             &mut decrypted,
             &password,
             BufferMode::Ram,
+            None,
             None,
             |_, _| {},
         )
@@ -461,6 +513,7 @@ mod tests {
             &password,
             BufferMode::Ram,
             None,
+            None,
             |_, _| {},
         );
         assert!(result.is_err());
@@ -497,6 +550,7 @@ mod tests {
             &mut decrypted,
             &wrong_password,
             BufferMode::Ram,
+            None,
             None,
             |_, _| {},
         );
@@ -540,6 +594,7 @@ mod tests {
             &password,
             BufferMode::Ram,
             Some(&keypair.private),
+            None,
             |_, _| {},
         )
         .unwrap();

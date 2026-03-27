@@ -668,6 +668,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
                         &password,
                         buffer_mode,
                         private_key.as_ref(),
+                        None,
                         make_progress_cb(show_progress, "󰌊 Decrypting chunk"),
                     )
                     .context("Chunked decryption failed")?;
@@ -680,6 +681,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
                         &password,
                         buffer_mode,
                         private_key.as_ref(),
+                        Some(output.as_path()),
                         make_progress_cb(show_progress, "󰌊 Decrypting chunk"),
                     )
                     .context("Chunked decryption failed")?;
@@ -695,6 +697,12 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
 
         // Non-chunked decrypt (existing path)
         let input_data = read_input(&input)?;
+        if input_data.starts_with(b"[CCRYPT|9|") || input_data.starts_with(b"[CCRYPT|10|") {
+            anyhow::bail!(
+                "This file uses chunked encryption and cannot be decrypted from stdin.\n\
+                 Write it to a file first, then decrypt with: cascrypt -d -i <file> -o <output>"
+            );
+        }
         let output_data = if let Some(privkey_path) = &cli.privkey {
             let private_key = load_private_key(privkey_path)?;
             if !cli.silent {
@@ -824,8 +832,8 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
 
             if !cli.silent {
                 let chunk_mb = chunk_size as f64 / (1024.0 * 1024.0);
-                let chunks = if file_size == 0 { 1 } else {
-                    ((file_size as usize) + chunk_size - 1) / chunk_size
+                let chunks = if file_size == 0 { 1u64 } else {
+                    (file_size + chunk_size as u64 - 1) / chunk_size as u64
                 };
                 eprintln!("󰌆 Chunked mode: {} chunks of {:.1} MiB", chunks, chunk_mb);
                 if pubkey.is_some() {
