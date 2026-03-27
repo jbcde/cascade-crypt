@@ -1,3 +1,5 @@
+use hkdf::Hkdf;
+use hmac::{Hmac, Mac};
 use rand::Rng;
 use sha2::{Digest, Sha256};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
@@ -11,6 +13,7 @@ use crate::header::{Argon2Params, Header, HeaderError};
 use crate::hybrid::{HybridPrivateKey, HybridPublicKey};
 
 const SALT_LEN: usize = 32;
+const HMAC_LEN: usize = 32;
 const FRAME_PREFIX_LEN: usize = 8; // u64 LE chunk length
 /// Hard cap on a single chunk frame to prevent OOM from crafted frame_len.
 /// 8 GiB is far beyond any reasonable chunk size.
@@ -41,6 +44,31 @@ fn compute_chunk_size(file_size: u64, available: u64) -> Option<usize> {
     } else {
         None
     }
+}
+
+/// Derive a per-chunk HMAC key from the password and chunk salt via HKDF-SHA256.
+fn derive_chunk_hmac_key(password: &[u8], salt: &[u8]) -> Zeroizing<[u8; 32]> {
+    let hk = Hkdf::<Sha256>::new(Some(salt), password);
+    let mut key = Zeroizing::new([0u8; 32]);
+    hk.expand(b"cascrypt-chunk-hmac", key.as_mut())
+        .expect("32 bytes is valid for HKDF-SHA256");
+    key
+}
+
+/// Compute HMAC-SHA256 over chunk data, binding chunk index, frame length, salt, and ciphertext.
+fn compute_chunk_hmac(
+    key: &[u8; 32],
+    chunk_index: u64,
+    frame_len_bytes: &[u8],
+    salt: &[u8],
+    ciphertext: &[u8],
+) -> [u8; 32] {
+    let mut mac = <Hmac<Sha256>>::new_from_slice(key).expect("32-byte key is valid for HMAC");
+    mac.update(&chunk_index.to_le_bytes());
+    mac.update(frame_len_bytes);
+    mac.update(salt);
+    mac.update(ciphertext);
+    mac.finalize().into_bytes().into()
 }
 
 /// Read up to `buf.len()` bytes, retrying on partial reads until EOF.
@@ -144,18 +172,23 @@ where
             chunk_data, password, algorithms, &salt, locked, buffer_mode, |_, _| {},
         )?;
 
-        // Frame: [8-byte len][32-byte salt][ciphertext]
-        let frame_len = (SALT_LEN + ciphertext.len()) as u64;
+        // Frame: [8-byte len][32-byte salt][32-byte hmac][ciphertext]
+        let frame_len = (SALT_LEN + HMAC_LEN + ciphertext.len()) as u64;
         let frame_len_bytes = frame_len.to_le_bytes();
+
+        let hmac_key = derive_chunk_hmac_key(password, &salt);
+        let hmac_tag = compute_chunk_hmac(&hmac_key, i as u64, &frame_len_bytes, &salt, &ciphertext);
 
         output
             .write_all(&frame_len_bytes)
             .map_err(CascadeError::Io)?;
         output.write_all(&salt).map_err(CascadeError::Io)?;
+        output.write_all(&hmac_tag).map_err(CascadeError::Io)?;
         output.write_all(&ciphertext).map_err(CascadeError::Io)?;
 
         hasher.update(&frame_len_bytes);
         hasher.update(&salt);
+        hasher.update(&hmac_tag);
         hasher.update(&ciphertext);
 
         progress(i + 1, chunk_count);
@@ -275,6 +308,12 @@ where
         reader.consume(skip);
     }
 
+    // Compute runtime frame size cap: the lesser of MAX_FRAME_LEN and available memory.
+    // Prevents attacker-controlled frame_len from allocating more than the machine can handle.
+    let frame_cap = crate::buffer::get_available_memory()
+        .map(|mem| (mem as u64).min(MAX_FRAME_LEN))
+        .unwrap_or(MAX_FRAME_LEN);
+
     // Single-pass: read, hash, and decrypt each frame
     let mut hasher = Sha256::new();
     for i in 0..chunk_count {
@@ -285,17 +324,17 @@ where
             .map_err(CascadeError::Io)?;
         let frame_len_u64 = u64::from_le_bytes(frame_len_bytes);
 
-        if frame_len_u64 < SALT_LEN as u64 {
+        if frame_len_u64 < (SALT_LEN + HMAC_LEN) as u64 {
             return Err(CascadeError::Crypto(
                 crate::crypto::CryptoError::DecryptionFailed(
-                    "Chunk frame too small for salt".into(),
+                    "Chunk frame too small for salt + HMAC".into(),
                 ),
             ));
         }
-        if frame_len_u64 > MAX_FRAME_LEN {
+        if frame_len_u64 > frame_cap {
             return Err(CascadeError::Crypto(
                 crate::crypto::CryptoError::DecryptionFailed(
-                    format!("Chunk frame too large: {} bytes (max {})", frame_len_u64, MAX_FRAME_LEN),
+                    format!("Chunk frame too large: {} bytes (max {})", frame_len_u64, frame_cap),
                 ),
             ));
         }
@@ -311,9 +350,24 @@ where
         hasher.update(&frame_len_bytes);
         hasher.update(&frame_data);
 
-        // Extract salt and ciphertext
+        // Extract salt, HMAC tag, and ciphertext
         let salt: [u8; 32] = frame_data[..SALT_LEN].try_into().unwrap();
-        let ciphertext = &frame_data[SALT_LEN..];
+        let stored_hmac: [u8; 32] = frame_data[SALT_LEN..SALT_LEN + HMAC_LEN].try_into().unwrap();
+        let ciphertext = &frame_data[SALT_LEN + HMAC_LEN..];
+
+        // Verify HMAC BEFORE decrypting — reject tampered chunks without emitting plaintext
+        let hmac_key = derive_chunk_hmac_key(password, &salt);
+        let expected_hmac = compute_chunk_hmac(&hmac_key, i as u64, &frame_len_bytes, &salt, ciphertext);
+        if stored_hmac.ct_eq(&expected_hmac).unwrap_u8() != 1 {
+            if let Some(path) = output_path {
+                let _ = std::fs::remove_file(path);
+            }
+            return Err(CascadeError::Crypto(
+                crate::crypto::CryptoError::DecryptionFailed(
+                    format!("Chunk {} HMAC verification failed — data may be tampered", i),
+                ),
+            ));
+        }
 
         // Build per-chunk header for decrypt_layers
         let chunk_header = Header {
@@ -688,7 +742,7 @@ mod tests {
 
         let encrypted_bytes = encrypted.into_inner();
         // Verify it's a v10 header
-        assert!(encrypted_bytes.starts_with(b"[CCRYPT|10|E|"));
+        assert!(encrypted_bytes.starts_with(b"[CCRYPT|12|E|"));
 
         let mut reader = Cursor::new(encrypted_bytes.as_slice());
         let mut decrypted = Vec::new();

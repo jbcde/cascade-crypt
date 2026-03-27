@@ -140,17 +140,9 @@ fn get_available_memory_platform() -> Option<usize> {
         return None;
     }
 
-    // Get page size and free+inactive page counts via host_statistics64
-    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
-    if page_size <= 0 {
-        return None;
-    }
-
-    // Fall back to total memory * 3/4 as conservative estimate if
-    // vm_stat info isn't available through the simple sysctl path.
-    // macOS doesn't expose MemAvailable like Linux, so total * 3/4
-    // is a reasonable heuristic for chunking decisions.
-    Some(((memsize as usize) * 3) / 4)
+    // macOS doesn't expose MemAvailable like Linux. Return total
+    // physical memory and let callers apply their own thresholds.
+    Some(memsize as usize)
 }
 
 #[cfg(target_os = "windows")]

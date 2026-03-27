@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Chunked encryption** for files that exceed available memory. Files are split into fixed-size pieces, each encrypted independently through the full algorithm cascade with its own Argon2id-derived key from a unique random salt. A SHA-256 hash over all chunk frames is verified on decryption.
 - Chunked mode activates automatically when file size exceeds 3/4 of available RAM
 - `--chunk <SIZE>` flag for manual chunk size control — accepts human-readable sizes (`512k`, `100m`, `4g`, case-insensitive). Use this when the recipient has less RAM than the encrypting machine, ensuring they can decrypt without memory pressure.
-- Header versions 9 (chunked, plaintext) and 10 (chunked, encrypted) with chunk count and frame integrity hash
+- Header versions 11 (chunked, plaintext) and 12 (chunked, encrypted) with chunk count and frame integrity hash
 - Decryption auto-detects chunked files from the header — no flags needed on the receiving end
 - Clear error message when attempting to decrypt chunked files from stdin
 - 5 new E2E tests covering chunked roundtrip, single-chunk, tamper detection, multi-algorithm cascade, and wrong password
@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `buffer::get_available_memory()` visibility widened to `pub(crate)`
 
 ### Security
+- **Per-chunk HMAC-SHA256** authentication: each chunk frame carries an HMAC tag verified before decryption, preventing plaintext emission for tampered chunks. HMAC key derived via HKDF-SHA256 from password + chunk salt. HMAC binds chunk index, frame length, salt, and ciphertext — prevents tampering, reordering, and length manipulation. Full-file SHA-256 hash retained for truncation detection.
 - Chunked hash verification uses constant-time comparison (`subtle::ConstantTimeEq`) to prevent timing side channels
 - Bounded header read in chunked decryption (64 KiB cap) prevents DoS from missing newline
 - Frame length capped at 8 GiB (`MAX_FRAME_LEN`) to prevent OOM from crafted inputs
@@ -32,6 +33,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 - stderr flush in progress callback so chunk counter updates in real time
 - v10 encrypted chunked header serialization and `--pubkey` documentation
+
+### Breaking Changes
+- **Chunked frame format changed:** Per-chunk HMAC authentication added to the frame wire format (`[frame_len][salt][hmac][ciphertext]`). Header versions bumped from v9/v10 to v11/v12. Files encrypted with the previous v0.7.0-unstable chunked format cannot be decrypted. Non-chunked files (v7/v8 headers) are unaffected.
 
 ### Build
 - `Cargo.lock` now committed (was gitignored) — guarantees reproducible builds on fresh clones

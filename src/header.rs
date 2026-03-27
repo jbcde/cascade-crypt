@@ -10,8 +10,8 @@ use crate::hybrid::{self, EncapsulatedKeys, HybridPrivateKey, HybridPublicKey};
 const MAGIC: &str = "CCRYPT";
 const VERSION_PLAIN: u8 = 7;
 const VERSION_ENCRYPTED: u8 = 8;
-const VERSION_CHUNKED_PLAIN: u8 = 9;
-const VERSION_CHUNKED_ENCRYPTED: u8 = 10;
+const VERSION_CHUNKED_PLAIN: u8 = 11;
+const VERSION_CHUNKED_ENCRYPTED: u8 = 12;
 
 /// Argon2 key derivation parameters stored in header for forward compatibility
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -385,7 +385,7 @@ impl Header {
             .map(|(p, _)| {
                 p.len() >= 3
                     && p[0] == MAGIC
-                    && (p[1] == "8" || p[1] == "10")
+                    && (p[1] == "8" || p[1] == "12")
                     && p[2] == "E"
             })
             .unwrap_or(false)
@@ -394,7 +394,7 @@ impl Header {
     #[must_use]
     pub fn is_chunked(data: &[u8]) -> bool {
         parse_header_line(data)
-            .map(|(p, _)| p.len() >= 2 && p[0] == MAGIC && (p[1] == "9" || p[1] == "10"))
+            .map(|(p, _)| p.len() >= 2 && p[0] == MAGIC && (p[1] == "11" || p[1] == "12"))
             .unwrap_or(false)
     }
 }

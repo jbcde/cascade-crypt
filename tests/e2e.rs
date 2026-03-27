@@ -1752,11 +1752,11 @@ fn test_chunked_single_chunk() {
         "-s",
     ]);
 
-    // Verify it's a v9 header
+    // Verify it's a v11 header (chunked with per-chunk HMAC)
     let enc_data = fs::read(&encrypted).unwrap();
     assert!(
-        enc_data.starts_with(b"[CCRYPT|9|"),
-        "Expected v9 chunked header, got: {:?}",
+        enc_data.starts_with(b"[CCRYPT|11|"),
+        "Expected v11 chunked header, got: {:?}",
         String::from_utf8_lossy(&enc_data[..20.min(enc_data.len())])
     );
 

@@ -195,6 +195,7 @@ dependencies = [
  "des",
  "gift-cipher",
  "hkdf",
+ "hmac",
  "idea",
  "kisaseed",
  "kuznyechik",
