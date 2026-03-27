@@ -21,24 +21,26 @@ const MAX_HEADER_LEN: usize = 64 * 1024;
 const MAX_CHUNK_COUNT: u64 = u32::MAX as u64;
 
 /// Check whether a file should be chunked based on available RAM.
-/// Returns `Some(chunk_size)` if `file_size > 3/4 * available_ram`, else `None`.
-/// Default chunk size = available_ram / 4.
-#[cfg(target_os = "linux")]
+/// Returns `Some(chunk_size)` if the file exceeds the memory threshold, else `None`.
 pub fn should_chunk(file_size: u64) -> Option<usize> {
-    let available = crate::buffer::get_available_memory()? as u64;
+    let available = crate::buffer::get_available_memory()?;
+    compute_chunk_size(file_size, available as u64)
+}
+
+/// Pure decision logic: given file size and available memory, decide whether to
+/// chunk and what size. Returns `Some(chunk_size)` if `file_size > 3/4 * available`,
+/// with chunk_size = available / 4 (minimum 1 MiB).
+fn compute_chunk_size(file_size: u64, available: u64) -> Option<usize> {
+    if available == 0 {
+        return None;
+    }
     let threshold = (available * 3) / 4;
     if file_size > threshold {
-        // Chunk size = 1/4 of available RAM, minimum 1 MiB
-        let chunk = (available / 4).max(1024 * 1024) as usize;
-        Some(chunk)
+        let chunk = (available / 4).max(1024 * 1024);
+        Some(chunk as usize)
     } else {
         None
     }
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn should_chunk(_file_size: u64) -> Option<usize> {
-    None
 }
 
 /// Read up to `buf.len()` bytes, retrying on partial reads until EOF.
@@ -350,6 +352,108 @@ where
 mod tests {
     use super::*;
     use std::io::Cursor;
+
+    // --- compute_chunk_size tests (pure logic, no platform dependency) ---
+
+    #[test]
+    fn test_compute_no_chunk_when_file_fits() {
+        // 1 GiB file, 8 GiB RAM → threshold is 6 GiB → no chunking
+        let ram = 8 * 1024 * 1024 * 1024u64;
+        assert_eq!(compute_chunk_size(1 * 1024 * 1024 * 1024, ram), None);
+    }
+
+    #[test]
+    fn test_compute_no_chunk_at_threshold_boundary() {
+        // File exactly at 3/4 of RAM → not above threshold → no chunking
+        let ram = 8 * 1024 * 1024 * 1024u64;
+        let threshold = (ram * 3) / 4;
+        assert_eq!(compute_chunk_size(threshold, ram), None);
+    }
+
+    #[test]
+    fn test_compute_chunks_above_threshold() {
+        // File 1 byte above 3/4 of RAM → should chunk
+        let ram = 8 * 1024 * 1024 * 1024u64;
+        let threshold = (ram * 3) / 4;
+        let result = compute_chunk_size(threshold + 1, ram);
+        assert!(result.is_some());
+        // Chunk size should be RAM / 4
+        assert_eq!(result.unwrap(), (ram / 4) as usize);
+    }
+
+    #[test]
+    fn test_compute_chunk_size_is_quarter_ram() {
+        let ram = 32 * 1024 * 1024 * 1024u64; // 32 GiB
+        let file = 30 * 1024 * 1024 * 1024u64; // 30 GiB
+        let result = compute_chunk_size(file, ram).unwrap();
+        assert_eq!(result, 8 * 1024 * 1024 * 1024); // 8 GiB
+    }
+
+    #[test]
+    fn test_compute_minimum_chunk_size_1mib() {
+        // Very low RAM: 2 MiB → chunk size would be 512 KiB, but minimum is 1 MiB
+        let ram = 2 * 1024 * 1024u64;
+        let file = 10 * 1024 * 1024u64;
+        let result = compute_chunk_size(file, ram).unwrap();
+        assert_eq!(result, 1024 * 1024); // 1 MiB minimum
+    }
+
+    #[test]
+    fn test_compute_zero_available_memory() {
+        assert_eq!(compute_chunk_size(1000, 0), None);
+    }
+
+    #[test]
+    fn test_compute_file_larger_than_ram() {
+        // 100 GiB file, 4 GiB RAM
+        let ram = 4 * 1024 * 1024 * 1024u64;
+        let file = 100 * 1024 * 1024 * 1024u64;
+        let result = compute_chunk_size(file, ram).unwrap();
+        assert_eq!(result, 1 * 1024 * 1024 * 1024); // 1 GiB chunks
+    }
+
+    #[test]
+    fn test_compute_tiny_file_never_chunks() {
+        // 100 bytes, 1 GiB RAM → never chunk
+        let ram = 1024 * 1024 * 1024u64;
+        assert_eq!(compute_chunk_size(100, ram), None);
+    }
+
+    #[test]
+    fn test_compute_zero_file_size() {
+        let ram = 8 * 1024 * 1024 * 1024u64;
+        assert_eq!(compute_chunk_size(0, ram), None);
+    }
+
+    #[test]
+    fn test_compute_file_equals_ram() {
+        // File == RAM → above 3/4 threshold → should chunk
+        let ram = 4 * 1024 * 1024 * 1024u64;
+        let result = compute_chunk_size(ram, ram);
+        assert!(result.is_some());
+    }
+
+    // --- get_available_memory platform sanity test ---
+
+    #[test]
+    fn test_get_available_memory_returns_sane_value() {
+        let mem = crate::buffer::get_available_memory();
+        // Must return Some on Linux/macOS/Windows, None on other platforms
+        if cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows")) {
+            let bytes = mem.expect("get_available_memory should return Some on this platform");
+            // Sanity: more than 1 MiB, less than 1 TiB
+            assert!(bytes > 1024 * 1024, "available memory suspiciously low: {} bytes", bytes);
+            assert!(bytes < 1024 * 1024 * 1024 * 1024, "available memory suspiciously high: {} bytes", bytes);
+        }
+    }
+
+    // --- should_chunk integration test ---
+
+    #[test]
+    fn test_should_chunk_small_file() {
+        // A 1 KiB file should never trigger auto-chunking on any real machine
+        assert_eq!(should_chunk(1024), None);
+    }
 
     fn random_password() -> Vec<u8> {
         let bytes: [u8; 16] = rand::thread_rng().gen();

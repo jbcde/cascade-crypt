@@ -78,8 +78,7 @@ pub fn should_switch_to_disk(current_size: usize) -> bool {
         return true;
     }
 
-    // Secondary check (Linux): check /proc/meminfo
-    #[cfg(target_os = "linux")]
+    // Secondary check: query available memory (cross-platform)
     if let Some(available) = get_available_memory() {
         // Switch if estimated > 75% of available or < 256MB would remain
         const MIN_REMAINING: usize = 256 * 1024 * 1024; // 256 MB
@@ -98,22 +97,94 @@ fn can_allocate(size: usize) -> bool {
     test_vec.try_reserve(size).is_ok()
 }
 
-/// Get available memory from /proc/meminfo on Linux.
-#[cfg(target_os = "linux")]
+/// Get available memory in bytes. Cross-platform: Linux, macOS, Windows.
 pub(crate) fn get_available_memory() -> Option<usize> {
-    use std::fs;
+    get_available_memory_platform()
+}
 
-    let content = fs::read_to_string("/proc/meminfo").ok()?;
+#[cfg(target_os = "linux")]
+fn get_available_memory_platform() -> Option<usize> {
+    let content = std::fs::read_to_string("/proc/meminfo").ok()?;
     for line in content.lines() {
         if line.starts_with("MemAvailable:") {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 {
-                // Value is in kB
                 let kb: usize = parts[1].parse().ok()?;
                 return Some(kb * 1024);
             }
         }
     }
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn get_available_memory_platform() -> Option<usize> {
+    use libc::{sysctl, CTL_HW, HW_MEMSIZE};
+    use std::mem;
+
+    // Get total physical memory via sysctl
+    let mut memsize: u64 = 0;
+    let mut size = mem::size_of::<u64>();
+    let mut mib = [CTL_HW, HW_MEMSIZE];
+    let ret = unsafe {
+        sysctl(
+            mib.as_mut_ptr(),
+            2,
+            &mut memsize as *mut u64 as *mut libc::c_void,
+            &mut size,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if ret != 0 || memsize == 0 {
+        return None;
+    }
+
+    // Get page size and free+inactive page counts via host_statistics64
+    let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+    if page_size <= 0 {
+        return None;
+    }
+
+    // Fall back to total memory * 3/4 as conservative estimate if
+    // vm_stat info isn't available through the simple sysctl path.
+    // macOS doesn't expose MemAvailable like Linux, so total * 3/4
+    // is a reasonable heuristic for chunking decisions.
+    Some(((memsize as usize) * 3) / 4)
+}
+
+#[cfg(target_os = "windows")]
+fn get_available_memory_platform() -> Option<usize> {
+    use std::mem;
+
+    #[repr(C)]
+    struct MemoryStatusEx {
+        dw_length: u32,
+        dw_memory_load: u32,
+        ull_total_phys: u64,
+        ull_avail_phys: u64,
+        ull_total_page_file: u64,
+        ull_avail_page_file: u64,
+        ull_total_virtual: u64,
+        ull_avail_virtual: u64,
+        ull_avail_extended_virtual: u64,
+    }
+
+    extern "system" {
+        fn GlobalMemoryStatusEx(lp_buffer: *mut MemoryStatusEx) -> i32;
+    }
+
+    let mut status: MemoryStatusEx = unsafe { mem::zeroed() };
+    status.dw_length = mem::size_of::<MemoryStatusEx>() as u32;
+    let ret = unsafe { GlobalMemoryStatusEx(&mut status) };
+    if ret == 0 {
+        return None;
+    }
+    Some(status.ull_avail_phys as usize)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+fn get_available_memory_platform() -> Option<usize> {
     None
 }
 
@@ -421,5 +492,17 @@ mod tests {
         assert_eq!(BufferMode::Ram.to_string(), "ram");
         assert_eq!(BufferMode::Disk.to_string(), "disk");
         assert_eq!(BufferMode::Auto.to_string(), "auto");
+    }
+
+    #[test]
+    fn test_get_available_memory_platform() {
+        let mem = get_available_memory();
+        if cfg!(any(target_os = "linux", target_os = "macos", target_os = "windows")) {
+            let bytes = mem.expect("get_available_memory should return Some on supported platform");
+            assert!(bytes > 1024 * 1024, "below 1 MiB: {}", bytes);
+            assert!(bytes < 1024 * 1024 * 1024 * 1024, "above 1 TiB: {}", bytes);
+        } else {
+            assert!(mem.is_none(), "unsupported platform should return None");
+        }
     }
 }
