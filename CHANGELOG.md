@@ -4,6 +4,43 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] - 2026-03-27
+
+### Added
+- **Chunked encryption** for files that exceed available memory. Files are split into fixed-size pieces, each encrypted independently through the full algorithm cascade with its own Argon2id-derived key from a unique random salt. A SHA-256 hash over all chunk frames is verified on decryption.
+- Chunked mode activates automatically when file size exceeds 3/4 of available RAM
+- `--chunk <SIZE>` flag for manual chunk size control — accepts human-readable sizes (`512k`, `100m`, `4g`, case-insensitive). Use this when the recipient has less RAM than the encrypting machine, ensuring they can decrypt without memory pressure.
+- Header versions 11 (chunked, plaintext) and 12 (chunked, encrypted) with chunk count and frame integrity hash
+- Decryption auto-detects chunked files from the header — no flags needed on the receiving end
+- Clear error message when attempting to decrypt chunked files from stdin
+- 5 new E2E tests covering chunked roundtrip, single-chunk, tamper detection, multi-algorithm cascade, and wrong password
+
+### Changed
+- **Cross-platform memory detection:** `get_available_memory()` now works on Linux (`/proc/meminfo`), macOS (`sysctl HW_MEMSIZE`), and Windows (`GlobalMemoryStatusEx`). Auto-chunking previously only worked on Linux.
+- `encrypt_layers`, `decrypt_layers`, `derive_keys_parallel` visibility widened to `pub(crate)` (no public API change)
+- `buffer::get_available_memory()` visibility widened to `pub(crate)`
+
+### Security
+- **Per-chunk HMAC-SHA256** authentication: each chunk frame carries an HMAC tag verified before decryption, preventing plaintext emission for tampered chunks. HMAC key derived via HKDF-SHA256 from password + chunk salt. HMAC binds chunk index, frame length, salt, and ciphertext — prevents tampering, reordering, and length manipulation. Full-file SHA-256 hash retained for truncation detection.
+- Chunked hash verification uses constant-time comparison (`subtle::ConstantTimeEq`) to prevent timing side channels
+- Bounded header read in chunked decryption (64 KiB cap) prevents DoS from missing newline
+- Frame length capped at the lesser of available memory and 8 GiB to prevent OOM from crafted inputs
+- Chunk count validated against `MAX_CHUNK_COUNT` to prevent DoS from attacker-controlled headers
+- Chunk count arithmetic uses checked conversion (`usize::try_from`) instead of `as` cast
+- Output file deleted on hash verification failure to avoid leaving unverified plaintext on disk
+- Unused salt field in chunked headers zeroed instead of filled with misleading random bytes
+
+### Fixed
+- stderr flush in progress callback so chunk counter updates in real time
+- v10 encrypted chunked header serialization and `--pubkey` documentation
+
+### Breaking Changes
+- **Chunked frame format changed:** Per-chunk HMAC authentication added to the frame wire format (`[frame_len][salt][hmac][ciphertext]`). Header versions bumped from v9/v10 to v11/v12. Files encrypted with the previous v0.7.0-unstable chunked format cannot be decrypted. Non-chunked files (v7/v8 headers) are unaffected.
+
+### Build
+- `Cargo.lock` now committed (was gitignored) — guarantees reproducible builds on fresh clones
+- Added explicit `cipher05` pin (`cipher = "=0.5.0-rc.6"`) in `Cargo.toml` as safety net against `cargo update` resolving to incompatible `cipher 0.5.0` stable
+
 ## [0.6.1] - 2026-02-09
 
 ### Changed

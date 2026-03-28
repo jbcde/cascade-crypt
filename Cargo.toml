@@ -1,6 +1,6 @@
 [package]
 name = "cascrypt"
-version = "0.6.1"
+version = "0.7.0"
 edition = "2021"
 description = "Cascading binary encryption with user-controlled algorithm ordering"
 license = "MIT"
@@ -45,6 +45,7 @@ block-padding = "0.3"
 # Key derivation
 argon2 = "0.5"
 hkdf = "0.12"
+hmac = "0.12"
 
 # Hashing
 sha2 = "0.10"

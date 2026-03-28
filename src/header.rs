@@ -1,4 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -10,6 +11,8 @@ use crate::hybrid::{self, EncapsulatedKeys, HybridPrivateKey, HybridPublicKey};
 const MAGIC: &str = "CCRYPT";
 const VERSION_PLAIN: u8 = 7;
 const VERSION_ENCRYPTED: u8 = 8;
+const VERSION_CHUNKED_PLAIN: u8 = 11;
+const VERSION_CHUNKED_ENCRYPTED: u8 = 12;
 
 /// Argon2 key derivation parameters stored in header for forward compatibility
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +75,8 @@ struct EncryptedPayload {
     seal: bool,
     #[serde(default)]
     argon2: Argon2Params,
+    #[serde(default)]
+    chunk_count: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,6 +86,7 @@ pub struct Header {
     pub locked: bool,
     pub ciphertext_hash: Option<[u8; 32]>,
     pub argon2_params: Argon2Params,
+    pub chunk_count: Option<u64>,
 }
 
 impl Header {
@@ -100,6 +106,7 @@ impl Header {
             locked,
             ciphertext_hash: None,
             argon2_params: Argon2Params::default(),
+            chunk_count: None,
         }
     }
 
@@ -120,6 +127,24 @@ impl Header {
             locked,
             ciphertext_hash: Some(hash.into()),
             argon2_params: Argon2Params::default(),
+            chunk_count: None,
+        }
+    }
+
+    /// Creates a chunked header with integrity hash over all chunk frames.
+    pub fn with_chunks(
+        algorithms: Vec<Algorithm>,
+        argon2_params: Argon2Params,
+        chunk_count: u64,
+        full_hash: [u8; 32],
+    ) -> Self {
+        Self {
+            algorithms,
+            salt: rand::thread_rng().gen(),
+            locked: false,
+            ciphertext_hash: Some(full_hash),
+            argon2_params,
+            chunk_count: Some(chunk_count),
         }
     }
 
@@ -138,8 +163,13 @@ impl Header {
     fn compute_hash_bytes(&self) -> [u8; 32] {
         let mut h = Sha256::new();
         h.update(self.algo_codes().as_bytes());
-        h.update(self.salt);
+        if self.chunk_count.is_none() {
+            h.update(self.salt);
+        }
         h.update(self.argon2_str().as_bytes());
+        if let Some(chunk_count) = self.chunk_count {
+            h.update(chunk_count.to_string().as_bytes());
+        }
         if let Some(ct_hash) = &self.ciphertext_hash {
             h.update(ct_hash);
         }
@@ -152,16 +182,29 @@ impl Header {
             .ciphertext_hash
             .map(|h| hex::encode(&h))
             .unwrap_or_default();
-        format!(
-            "[{}|{}|{}|{}|{}|{}|{}]\n",
-            MAGIC,
-            VERSION_PLAIN,
-            self.algo_codes(),
-            hex::encode(&self.salt),
-            self.argon2_str(),
-            ct_hash_hex,
-            hex::encode(&self.compute_hash_bytes())
-        )
+        if let Some(chunk_count) = self.chunk_count {
+            format!(
+                "[{}|{}|{}|{}|{}|{}|{}]\n",
+                MAGIC,
+                VERSION_CHUNKED_PLAIN,
+                self.algo_codes(),
+                self.argon2_str(),
+                chunk_count,
+                ct_hash_hex,
+                hex::encode(&self.compute_hash_bytes())
+            )
+        } else {
+            format!(
+                "[{}|{}|{}|{}|{}|{}|{}]\n",
+                MAGIC,
+                VERSION_PLAIN,
+                self.algo_codes(),
+                hex::encode(&self.salt),
+                self.argon2_str(),
+                ct_hash_hex,
+                hex::encode(&self.compute_hash_bytes())
+            )
+        }
     }
 
     pub fn serialize_encrypted(&self, recipient: &HybridPublicKey) -> Result<String, HeaderError> {
@@ -170,6 +213,7 @@ impl Header {
             salt: self.salt,
             seal: self.locked,
             argon2: self.argon2_params,
+            chunk_count: self.chunk_count,
         })
         .map_err(|e| HeaderError::JsonError(e.to_string()))?;
 
@@ -188,10 +232,15 @@ impl Header {
         h.update(&ct_b64);
         h.update(&ct_hash_hex);
 
+        let version = if self.chunk_count.is_some() {
+            VERSION_CHUNKED_ENCRYPTED
+        } else {
+            VERSION_ENCRYPTED
+        };
         Ok(format!(
             "[{}|{}|E|{}|{}|{}|{}]\n",
             MAGIC,
-            VERSION_ENCRYPTED,
+            version,
             encap_b64,
             ct_b64,
             ct_hash_hex,
@@ -220,6 +269,7 @@ impl Header {
                     locked: false,
                     ciphertext_hash: Some(ciphertext_hash),
                     argon2_params,
+                    chunk_count: None,
                 };
                 let provided_hash =
                     hex::decode(parts[6]).map_err(|_| HeaderError::InvalidFormat)?;
@@ -231,7 +281,32 @@ impl Header {
                 }
                 Ok((header, remaining))
             }
-            VERSION_ENCRYPTED => Err(HeaderError::EncryptedHeader),
+            VERSION_CHUNKED_PLAIN if parts.len() == 7 => {
+                let algorithms = parse_algos(parts[2])?;
+                let argon2_params = parse_argon2(parts[3])?;
+                let chunk_count: u64 = parts[4]
+                    .parse()
+                    .map_err(|_| HeaderError::InvalidFormat)?;
+                let ciphertext_hash = parse_hash(parts[5])?;
+                let header = Self {
+                    algorithms,
+                    salt: rand::thread_rng().gen(),
+                    locked: false,
+                    ciphertext_hash: Some(ciphertext_hash),
+                    argon2_params,
+                    chunk_count: Some(chunk_count),
+                };
+                let provided_hash =
+                    hex::decode(parts[6]).map_err(|_| HeaderError::InvalidFormat)?;
+                let expected_hash = header.compute_hash_bytes();
+                if provided_hash.len() != 32
+                    || provided_hash.as_slice().ct_eq(&expected_hash).unwrap_u8() != 1
+                {
+                    return Err(HeaderError::HashMismatch);
+                }
+                Ok((header, remaining))
+            }
+            VERSION_ENCRYPTED | VERSION_CHUNKED_ENCRYPTED => Err(HeaderError::EncryptedHeader),
             v => Err(HeaderError::UnsupportedVersion(v)),
         }
     }
@@ -265,7 +340,7 @@ impl Header {
         }
 
         let version: u8 = parts[1].parse().map_err(|_| HeaderError::InvalidFormat)?;
-        if version != VERSION_ENCRYPTED {
+        if version != VERSION_ENCRYPTED && version != VERSION_CHUNKED_ENCRYPTED {
             return Err(HeaderError::UnsupportedVersion(version));
         }
 
@@ -299,6 +374,7 @@ impl Header {
                 locked: payload.seal,
                 ciphertext_hash: Some(ciphertext_hash),
                 argon2_params: payload.argon2,
+                chunk_count: payload.chunk_count,
             },
             remaining,
         ))
@@ -307,7 +383,19 @@ impl Header {
     #[must_use]
     pub fn is_encrypted(data: &[u8]) -> bool {
         parse_header_line(data)
-            .map(|(p, _)| p.len() >= 3 && p[0] == MAGIC && p[1] == "8" && p[2] == "E")
+            .map(|(p, _)| {
+                p.len() >= 3
+                    && p[0] == MAGIC
+                    && (p[1] == "8" || p[1] == "12")
+                    && p[2] == "E"
+            })
+            .unwrap_or(false)
+    }
+
+    #[must_use]
+    pub fn is_chunked(data: &[u8]) -> bool {
+        parse_header_line(data)
+            .map(|(p, _)| p.len() >= 2 && p[0] == MAGIC && (p[1] == "11" || p[1] == "12"))
             .unwrap_or(false)
     }
 }
