@@ -1,5 +1,4 @@
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
-use rand::Rng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
@@ -11,8 +10,8 @@ use crate::hybrid::{self, EncapsulatedKeys, HybridPrivateKey, HybridPublicKey};
 const MAGIC: &str = "CCRYPT";
 const VERSION_PLAIN: u8 = 7;
 const VERSION_ENCRYPTED: u8 = 8;
-const VERSION_CHUNKED_PLAIN: u8 = 11;
-const VERSION_CHUNKED_ENCRYPTED: u8 = 12;
+const VERSION_CHUNKED_PLAIN: u8 = 13;
+const VERSION_CHUNKED_ENCRYPTED: u8 = 14;
 
 /// Argon2 key derivation parameters stored in header for forward compatibility
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -132,15 +131,19 @@ impl Header {
     }
 
     /// Creates a chunked header with integrity hash over all chunk frames.
+    /// The `salt` is the per-file identity used to derive the file-level HMAC key;
+    /// callers must generate it once and pass the same value for placeholder and
+    /// final headers so the HMAC key is stable across the encrypt pass.
     pub fn with_chunks(
         algorithms: Vec<Algorithm>,
+        salt: [u8; 32],
         argon2_params: Argon2Params,
         chunk_count: u64,
         full_hash: [u8; 32],
     ) -> Self {
         Self {
             algorithms,
-            salt: rand::thread_rng().gen(),
+            salt,
             locked: false,
             ciphertext_hash: Some(full_hash),
             argon2_params,
@@ -163,9 +166,7 @@ impl Header {
     fn compute_hash_bytes(&self) -> [u8; 32] {
         let mut h = Sha256::new();
         h.update(self.algo_codes().as_bytes());
-        if self.chunk_count.is_none() {
-            h.update(self.salt);
-        }
+        h.update(self.salt);
         h.update(self.argon2_str().as_bytes());
         if let Some(chunk_count) = self.chunk_count {
             h.update(chunk_count.to_string().as_bytes());
@@ -184,10 +185,11 @@ impl Header {
             .unwrap_or_default();
         if let Some(chunk_count) = self.chunk_count {
             format!(
-                "[{}|{}|{}|{}|{}|{}|{}]\n",
+                "[{}|{}|{}|{}|{}|{}|{}|{}]\n",
                 MAGIC,
                 VERSION_CHUNKED_PLAIN,
                 self.algo_codes(),
+                hex::encode(&self.salt),
                 self.argon2_str(),
                 chunk_count,
                 ct_hash_hex,
@@ -281,23 +283,24 @@ impl Header {
                 }
                 Ok((header, remaining))
             }
-            VERSION_CHUNKED_PLAIN if parts.len() == 7 => {
+            VERSION_CHUNKED_PLAIN if parts.len() == 8 => {
                 let algorithms = parse_algos(parts[2])?;
-                let argon2_params = parse_argon2(parts[3])?;
-                let chunk_count: u64 = parts[4]
+                let salt = parse_salt(parts[3])?;
+                let argon2_params = parse_argon2(parts[4])?;
+                let chunk_count: u64 = parts[5]
                     .parse()
                     .map_err(|_| HeaderError::InvalidFormat)?;
-                let ciphertext_hash = parse_hash(parts[5])?;
+                let ciphertext_hash = parse_hash(parts[6])?;
                 let header = Self {
                     algorithms,
-                    salt: rand::thread_rng().gen(),
+                    salt,
                     locked: false,
                     ciphertext_hash: Some(ciphertext_hash),
                     argon2_params,
                     chunk_count: Some(chunk_count),
                 };
                 let provided_hash =
-                    hex::decode(parts[6]).map_err(|_| HeaderError::InvalidFormat)?;
+                    hex::decode(parts[7]).map_err(|_| HeaderError::InvalidFormat)?;
                 let expected_hash = header.compute_hash_bytes();
                 if provided_hash.len() != 32
                     || provided_hash.as_slice().ct_eq(&expected_hash).unwrap_u8() != 1
@@ -386,7 +389,7 @@ impl Header {
             .map(|(p, _)| {
                 p.len() >= 3
                     && p[0] == MAGIC
-                    && (p[1] == "8" || p[1] == "12")
+                    && (p[1] == "8" || p[1] == "14")
                     && p[2] == "E"
             })
             .unwrap_or(false)
@@ -395,7 +398,7 @@ impl Header {
     #[must_use]
     pub fn is_chunked(data: &[u8]) -> bool {
         parse_header_line(data)
-            .map(|(p, _)| p.len() >= 2 && p[0] == MAGIC && (p[1] == "11" || p[1] == "12"))
+            .map(|(p, _)| p.len() >= 2 && p[0] == MAGIC && (p[1] == "13" || p[1] == "14"))
             .unwrap_or(false)
     }
 }

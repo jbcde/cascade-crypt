@@ -46,11 +46,17 @@ fn compute_chunk_size(file_size: u64, available: u64) -> Option<usize> {
     }
 }
 
-/// Derive a per-chunk HMAC key from the password and chunk salt via HKDF-SHA256.
-fn derive_chunk_hmac_key(password: &[u8], salt: &[u8]) -> Zeroizing<[u8; 32]> {
-    let hk = Hkdf::<Sha256>::new(Some(salt), password);
+/// Derive a per-file HMAC key from the password and file-level salt via HKDF-SHA256.
+///
+/// The file salt lives in the header and is covered by the header hash (v13) or
+/// the authenticated encrypted payload (v14), so an attacker cannot substitute a
+/// different file's salt without being detected. Binding the HMAC key to a
+/// per-file random value prevents cross-file chunk splicing: a frame from file A
+/// is not a valid frame in file B even when both share the same password.
+fn derive_file_hmac_key(password: &[u8], file_salt: &[u8]) -> Zeroizing<[u8; 32]> {
+    let hk = Hkdf::<Sha256>::new(Some(file_salt), password);
     let mut key = Zeroizing::new([0u8; 32]);
-    hk.expand(b"cascrypt-chunk-hmac", key.as_mut())
+    hk.expand(b"cascrypt-file-hmac", key.as_mut())
         .expect("32 bytes is valid for HKDF-SHA256");
     key
 }
@@ -127,12 +133,19 @@ where
         })?
     };
 
+    // File-level salt: drives the per-file HMAC key, covered by the header hash
+    // (v13) or the authenticated encrypted payload (v14). Generated once and held
+    // stable across placeholder and final header writes.
+    let file_salt: [u8; 32] = rand::thread_rng().gen();
+    let hmac_key = derive_file_hmac_key(password, &file_salt);
+
     // Write placeholder header — we'll seek back to overwrite with final hash.
-    // For encrypted headers (v10), the serialized size varies due to random
+    // For encrypted headers (v14), the serialized size varies due to random
     // ephemeral keys producing JSON byte arrays of different decimal widths.
     // We pad the placeholder with extra space to guarantee the final header fits.
     let placeholder_header = Header::with_chunks(
         algorithms.to_vec(),
+        file_salt,
         Argon2Params::default(),
         chunk_count as u64,
         [0u8; 32], // placeholder hash
@@ -176,7 +189,6 @@ where
         let frame_len = (SALT_LEN + HMAC_LEN + ciphertext.len()) as u64;
         let frame_len_bytes = frame_len.to_le_bytes();
 
-        let hmac_key = derive_chunk_hmac_key(password, &salt);
         let hmac_tag = compute_chunk_hmac(&hmac_key, i as u64, &frame_len_bytes, &salt, &ciphertext);
 
         output
@@ -198,6 +210,7 @@ where
     let full_hash: [u8; 32] = hasher.finalize().into();
     let final_header = Header::with_chunks(
         algorithms.to_vec(),
+        file_salt,
         Argon2Params::default(),
         chunk_count as u64,
         full_hash,
@@ -294,6 +307,11 @@ where
     }
     let chunk_count = chunk_count_u64 as usize;
 
+    // Derive the per-file HMAC key once from the header's file-level salt.
+    // Every chunk HMAC in this file is keyed with this value, so frames from
+    // other files (with different file salts) cannot be spliced in.
+    let hmac_key = derive_file_hmac_key(password, &header.salt);
+
     // Skip null padding after header (v10 encrypted headers use padding
     // to reserve fixed space for the header rewrite)
     loop {
@@ -356,7 +374,6 @@ where
         let ciphertext = &frame_data[SALT_LEN + HMAC_LEN..];
 
         // Verify HMAC BEFORE decrypting — reject tampered chunks without emitting plaintext
-        let hmac_key = derive_chunk_hmac_key(password, &salt);
         let expected_hmac = compute_chunk_hmac(&hmac_key, i as u64, &frame_len_bytes, &salt, ciphertext);
         if stored_hmac.ct_eq(&expected_hmac).unwrap_u8() != 1 {
             if let Some(path) = output_path {
@@ -742,7 +759,7 @@ mod tests {
 
         let encrypted_bytes = encrypted.into_inner();
         // Verify it's a v10 header
-        assert!(encrypted_bytes.starts_with(b"[CCRYPT|12|E|"));
+        assert!(encrypted_bytes.starts_with(b"[CCRYPT|14|E|"));
 
         let mut reader = Cursor::new(encrypted_bytes.as_slice());
         let mut decrypted = Vec::new();

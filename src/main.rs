@@ -649,7 +649,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
             let mut peek = [0u8; 16];
             let n = file.read(&mut peek).context("Failed to read input")?;
 
-            if peek[..n].starts_with(b"[CCRYPT|11|") || peek[..n].starts_with(b"[CCRYPT|12|") {
+            if peek[..n].starts_with(b"[CCRYPT|13|") || peek[..n].starts_with(b"[CCRYPT|14|") {
                 // Chunked decrypt — streaming, no full-file load
                 file.seek(io::SeekFrom::Start(0)).context("Failed to seek input")?;
                 let private_key = cli.privkey.as_ref()
@@ -697,7 +697,7 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
 
         // Non-chunked decrypt (existing path)
         let input_data = read_input(&input)?;
-        if input_data.starts_with(b"[CCRYPT|11|") || input_data.starts_with(b"[CCRYPT|12|") {
+        if input_data.starts_with(b"[CCRYPT|13|") || input_data.starts_with(b"[CCRYPT|14|") {
             anyhow::bail!(
                 "This file uses chunked encryption and cannot be decrypted from stdin.\n\
                  Write it to a file first, then decrypt with: cascrypt -d -i <file> -o <output>"
