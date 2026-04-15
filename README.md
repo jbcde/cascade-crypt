@@ -2,7 +2,7 @@
 
 Cascading binary encryption tool with user-controlled algorithm ordering. Encrypt files through multiple layers of encryption, applied in the order you specify.
 
-> **v0.7.0 Breaking Changes:** Chunked encryption now uses per-chunk HMAC-SHA256 authentication (header versions v11/v12). Files encrypted with v0.7.0-unstable chunked format (v9/v10) must be re-encrypted. Non-chunked files (v7/v8) are unaffected. The v0.6.1 encoder change (8-byte length prefix) also remains — files from v0.6.0 or earlier must be decrypted with the prior version first. See [CHANGELOG.md](CHANGELOG.md) for details.
+> **v0.7.1 Security Fix:** Chunked encryption's HMAC key is now derived per-file from a random file salt in the header (new header versions v13/v14), closing a cross-file chunk splicing vulnerability found in v0.7.0. **v0.7.0 chunked files (v11/v12) still decrypt** — no re-encryption required. New encryptions emit v13/v14. Non-chunked files (v7/v8) are unaffected. The v0.6.1 encoder change (8-byte length prefix) also remains — files from v0.6.0 or earlier must be decrypted with the prior version first. See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## Features
 

@@ -61,6 +61,19 @@ fn derive_file_hmac_key(password: &[u8], file_salt: &[u8]) -> Zeroizing<[u8; 32]
     key
 }
 
+/// Legacy per-chunk HMAC key derivation used by v11/v12 files (v0.7.0).
+///
+/// Files using this scheme are vulnerable to cross-file chunk splicing when the
+/// same password is reused across files — see kelly-review.md K-1. Retained for
+/// backward-compatible decryption of legacy files; never used on encryption.
+fn derive_legacy_chunk_hmac_key(password: &[u8], chunk_salt: &[u8]) -> Zeroizing<[u8; 32]> {
+    let hk = Hkdf::<Sha256>::new(Some(chunk_salt), password);
+    let mut key = Zeroizing::new([0u8; 32]);
+    hk.expand(b"cascrypt-chunk-hmac", key.as_mut())
+        .expect("32 bytes is valid for HKDF-SHA256");
+    key
+}
+
 /// Compute HMAC-SHA256 over chunk data, binding chunk index, frame length, salt, and ciphertext.
 fn compute_chunk_hmac(
     key: &[u8; 32],
@@ -310,7 +323,14 @@ where
     // Derive the per-file HMAC key once from the header's file-level salt.
     // Every chunk HMAC in this file is keyed with this value, so frames from
     // other files (with different file salts) cannot be spliced in.
-    let hmac_key = derive_file_hmac_key(password, &header.salt);
+    //
+    // Legacy v11/v12 files use per-chunk HMAC keys — derive inside the loop
+    // from each chunk's own salt when header.legacy_chunk_hmac is set.
+    let file_hmac_key = if header.legacy_chunk_hmac {
+        None
+    } else {
+        Some(derive_file_hmac_key(password, &header.salt))
+    };
 
     // Skip null padding after header (v10 encrypted headers use padding
     // to reserve fixed space for the header rewrite)
@@ -373,8 +393,15 @@ where
         let stored_hmac: [u8; 32] = frame_data[SALT_LEN..SALT_LEN + HMAC_LEN].try_into().unwrap();
         let ciphertext = &frame_data[SALT_LEN + HMAC_LEN..];
 
-        // Verify HMAC BEFORE decrypting — reject tampered chunks without emitting plaintext
-        let expected_hmac = compute_chunk_hmac(&hmac_key, i as u64, &frame_len_bytes, &salt, ciphertext);
+        // Verify HMAC BEFORE decrypting — reject tampered chunks without emitting plaintext.
+        // v13/v14 uses the per-file key; v11/v12 legacy derives a per-chunk key.
+        let expected_hmac = match &file_hmac_key {
+            Some(key) => compute_chunk_hmac(key, i as u64, &frame_len_bytes, &salt, ciphertext),
+            None => {
+                let legacy_key = derive_legacy_chunk_hmac_key(password, &salt);
+                compute_chunk_hmac(&legacy_key, i as u64, &frame_len_bytes, &salt, ciphertext)
+            }
+        };
         if stored_hmac.ct_eq(&expected_hmac).unwrap_u8() != 1 {
             if let Some(path) = output_path {
                 let _ = std::fs::remove_file(path);
@@ -394,6 +421,7 @@ where
             ciphertext_hash: None, // already verified at frame level
             argon2_params: header.argon2_params,
             chunk_count: None,
+            legacy_chunk_hmac: false,
         };
 
         let decrypted =
@@ -758,7 +786,7 @@ mod tests {
         .unwrap();
 
         let encrypted_bytes = encrypted.into_inner();
-        // Verify it's a v10 header
+        // Verify it's a v14 header
         assert!(encrypted_bytes.starts_with(b"[CCRYPT|14|E|"));
 
         let mut reader = Cursor::new(encrypted_bytes.as_slice());
@@ -775,5 +803,218 @@ mod tests {
         .unwrap();
 
         assert_eq!(data.as_slice(), decrypted.as_slice());
+    }
+
+    /// Verify v0.7.0 (v11) chunked files still decrypt under v0.7.1.
+    ///
+    /// Synthesises a v11-format file by re-framing a v13 encryption: the per-chunk
+    /// ciphertexts are reused (they're independent of the HMAC scheme), only the
+    /// HMAC tags are regenerated with legacy per-chunk keying and the header is
+    /// rewritten with the v11 wire format and legacy header-hash semantics.
+    #[test]
+    fn test_legacy_v11_backward_compat() {
+        use hmac::{Hmac, Mac};
+
+        let data = b"backward compat test: v11 from v0.7.0 must still decrypt";
+        let password = random_password();
+        let algorithms = vec![Algorithm::Aes256];
+
+        // Encrypt with current code (produces v13).
+        let mut input = Cursor::new(data.as_slice());
+        let mut encrypted = Cursor::new(Vec::new());
+        encrypt_chunked(
+            &mut input, &mut encrypted, &password, &algorithms,
+            16, data.len() as u64, false, BufferMode::Ram, None, |_, _| {},
+        ).unwrap();
+        let v13_bytes = encrypted.into_inner();
+
+        // Walk frames, re-HMAC with legacy per-chunk keying, accumulate full hash.
+        let nl = v13_bytes.iter().position(|&b| b == b'\n').unwrap();
+        let body = &v13_bytes[nl + 1..];
+        let mut new_body = Vec::new();
+        let mut full_hasher = Sha256::new();
+        let mut offset = 0;
+        let mut chunk_index: u64 = 0;
+        while offset < body.len() {
+            let frame_len_bytes: [u8; 8] = body[offset..offset + 8].try_into().unwrap();
+            let frame_len = u64::from_le_bytes(frame_len_bytes) as usize;
+            let chunk_salt: [u8; 32] =
+                body[offset + 8..offset + 8 + SALT_LEN].try_into().unwrap();
+            let ct_start = offset + 8 + SALT_LEN + HMAC_LEN;
+            let ct_end = offset + 8 + frame_len;
+            let ciphertext = &body[ct_start..ct_end];
+
+            let legacy_key = derive_legacy_chunk_hmac_key(&password, &chunk_salt);
+            let mut mac = <Hmac<Sha256>>::new_from_slice(legacy_key.as_ref()).unwrap();
+            mac.update(&chunk_index.to_le_bytes());
+            mac.update(&frame_len_bytes);
+            mac.update(&chunk_salt);
+            mac.update(ciphertext);
+            let new_hmac: [u8; 32] = mac.finalize().into_bytes().into();
+
+            new_body.extend_from_slice(&frame_len_bytes);
+            new_body.extend_from_slice(&chunk_salt);
+            new_body.extend_from_slice(&new_hmac);
+            new_body.extend_from_slice(ciphertext);
+            full_hasher.update(&frame_len_bytes);
+            full_hasher.update(&chunk_salt);
+            full_hasher.update(&new_hmac);
+            full_hasher.update(ciphertext);
+
+            chunk_index += 1;
+            offset = ct_end;
+        }
+        let chunk_count = chunk_index;
+        let full_hash: [u8; 32] = full_hasher.finalize().into();
+
+        // Build v11 header. Legacy header hash covers algo_codes || argon2_str
+        // || chunk_count || full_hash (no salt hashing in v11).
+        let argon2_str = "65536,3,4";
+        let algo_codes = "A";
+        let mut hh = Sha256::new();
+        hh.update(algo_codes.as_bytes());
+        hh.update(argon2_str.as_bytes());
+        hh.update(chunk_count.to_string().as_bytes());
+        hh.update(&full_hash);
+        let header_hash: [u8; 32] = hh.finalize().into();
+        let to_hex = |bytes: &[u8; 32]| {
+            let mut s = String::with_capacity(64);
+            for &b in bytes {
+                s.push_str(&format!("{:02x}", b));
+            }
+            s
+        };
+        let header_line = format!(
+            "[CCRYPT|11|{}|{}|{}|{}|{}]\n",
+            algo_codes,
+            argon2_str,
+            chunk_count,
+            to_hex(&full_hash),
+            to_hex(&header_hash),
+        );
+
+        let mut v11_bytes = header_line.into_bytes();
+        v11_bytes.extend_from_slice(&new_body);
+
+        // Decrypt the synthesised v11 file.
+        let mut reader = Cursor::new(v11_bytes.as_slice());
+        let mut decrypted = Vec::new();
+        decrypt_chunked(
+            &mut reader, &mut decrypted, &password,
+            BufferMode::Ram, None, None, |_, _| {},
+        ).unwrap();
+
+        assert_eq!(data.as_slice(), decrypted.as_slice());
+    }
+
+    #[test]
+    fn test_v13_cross_file_splicing_rejected() {
+        // K-1 regression: a chunk frame from one v13 file must not be accepted
+        // as a valid frame in another v13 file, even when both share password,
+        // algorithms, argon2 params, and chunk count. The per-file HMAC key
+        // derived from each file's random file_salt makes the HMAC tag on a
+        // foreign frame invalid when verified under the destination file's key.
+
+        let password = random_password();
+        let algorithms = vec![Algorithm::Aes256];
+        let chunk_size = 16;
+        // Equal length, chunk_size-aligned → identical chunk count per file.
+        let data_a: [u8; 64] = *b"file_A chunk_0: file_A chunk_1: file_A chunk_2: file_A chunk_3: ";
+        let data_b: [u8; 64] = *b"file_B chunk_0: file_B chunk_1: file_B chunk_2: file_B chunk_3: ";
+
+        let encrypt = |data: &[u8]| -> Vec<u8> {
+            let mut out = Cursor::new(Vec::new());
+            encrypt_chunked(
+                &mut Cursor::new(data),
+                &mut out,
+                &password,
+                &algorithms,
+                chunk_size,
+                data.len() as u64,
+                false,
+                BufferMode::Ram,
+                None,
+                |_, _| {},
+            )
+            .unwrap();
+            out.into_inner()
+        };
+        let bytes_a = encrypt(&data_a);
+        let bytes_b = encrypt(&data_b);
+
+        // Both must be v13, and their file_salts must differ — the property the
+        // fix depends on.
+        assert!(bytes_a.starts_with(b"[CCRYPT|13|"));
+        assert!(bytes_b.starts_with(b"[CCRYPT|13|"));
+        let (header_a, _) = Header::parse(&bytes_a).unwrap();
+        let (header_b, _) = Header::parse(&bytes_b).unwrap();
+        assert_ne!(header_a.salt, header_b.salt);
+
+        // Split each file into header-line + body; parse body into frames.
+        let nl_a = bytes_a.iter().position(|&b| b == b'\n').unwrap();
+        let nl_b = bytes_b.iter().position(|&b| b == b'\n').unwrap();
+        let body_a = &bytes_a[nl_a + 1..];
+        let body_b = &bytes_b[nl_b + 1..];
+
+        let parse_frames = |body: &[u8]| -> Vec<Vec<u8>> {
+            let mut frames = Vec::new();
+            let mut off = 0;
+            while off < body.len() {
+                let frame_len_bytes: [u8; 8] = body[off..off + 8].try_into().unwrap();
+                let frame_len = u64::from_le_bytes(frame_len_bytes) as usize;
+                frames.push(body[off..off + 8 + frame_len].to_vec());
+                off += 8 + frame_len;
+            }
+            frames
+        };
+        let frames_a = parse_frames(body_a);
+        let frames_b = parse_frames(body_b);
+        assert_eq!(frames_a.len(), frames_b.len());
+        assert!(frames_a.len() >= 2);
+
+        // Splice: keep file A's frame 0, substitute file B's frame 1, keep
+        // the rest of file A. Chunk indices stay aligned so the chunk_index
+        // binding in the HMAC input isn't what rejects the splice — it's the
+        // file_salt-derived HMAC key mismatch.
+        let mut spliced_body = Vec::new();
+        spliced_body.extend_from_slice(&frames_a[0]);
+        spliced_body.extend_from_slice(&frames_b[1]);
+        for frame in &frames_a[2..] {
+            spliced_body.extend_from_slice(frame);
+        }
+
+        // Attacker recomputes the unkeyed checksums to make every non-MAC
+        // field self-consistent — this is the realistic attack scenario.
+        let mut hasher = Sha256::new();
+        hasher.update(&spliced_body);
+        let spliced_full_hash: [u8; 32] = hasher.finalize().into();
+        let spliced_header = Header::with_chunks(
+            header_a.algorithms.clone(),
+            header_a.salt,
+            header_a.argon2_params,
+            header_a.chunk_count.unwrap(),
+            spliced_full_hash,
+        );
+        let mut spliced = spliced_header.serialize().into_bytes();
+        spliced.extend_from_slice(&spliced_body);
+
+        // Decrypt must fail at chunk 1's HMAC check, before any plaintext
+        // is emitted from the spliced chunk.
+        let result = decrypt_chunked(
+            &mut Cursor::new(spliced.as_slice()),
+            &mut Vec::new(),
+            &password,
+            BufferMode::Ram,
+            None,
+            None,
+            |_, _| {},
+        );
+        let err = result.expect_err("spliced v13 file must fail to decrypt");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Chunk 1") && msg.contains("HMAC"),
+            "expected chunk 1 HMAC failure, got: {}",
+            msg
+        );
     }
 }

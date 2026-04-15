@@ -12,6 +12,11 @@ const VERSION_PLAIN: u8 = 7;
 const VERSION_ENCRYPTED: u8 = 8;
 const VERSION_CHUNKED_PLAIN: u8 = 13;
 const VERSION_CHUNKED_ENCRYPTED: u8 = 14;
+// Legacy chunked versions from v0.7.0. Readable but no longer emitted.
+// Their per-chunk HMAC keying allows cross-file chunk splicing when the same
+// password is reused (see kelly-review.md K-1); v13/v14 fix this.
+const LEGACY_VERSION_CHUNKED_PLAIN: u8 = 11;
+const LEGACY_VERSION_CHUNKED_ENCRYPTED: u8 = 12;
 
 /// Argon2 key derivation parameters stored in header for forward compatibility
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +91,10 @@ pub struct Header {
     pub ciphertext_hash: Option<[u8; 32]>,
     pub argon2_params: Argon2Params,
     pub chunk_count: Option<u64>,
+    /// True for v11/v12 legacy chunked headers where the HMAC key was derived
+    /// per-chunk from `HKDF(password, chunk_salt)` and the `salt` field was
+    /// unused. False for v13/v14 chunked and all non-chunked headers.
+    pub(crate) legacy_chunk_hmac: bool,
 }
 
 impl Header {
@@ -106,6 +115,7 @@ impl Header {
             ciphertext_hash: None,
             argon2_params: Argon2Params::default(),
             chunk_count: None,
+            legacy_chunk_hmac: false,
         }
     }
 
@@ -127,6 +137,7 @@ impl Header {
             ciphertext_hash: Some(hash.into()),
             argon2_params: Argon2Params::default(),
             chunk_count: None,
+            legacy_chunk_hmac: false,
         }
     }
 
@@ -148,6 +159,7 @@ impl Header {
             ciphertext_hash: Some(full_hash),
             argon2_params,
             chunk_count: Some(chunk_count),
+            legacy_chunk_hmac: false,
         }
     }
 
@@ -166,7 +178,12 @@ impl Header {
     fn compute_hash_bytes(&self) -> [u8; 32] {
         let mut h = Sha256::new();
         h.update(self.algo_codes().as_bytes());
-        h.update(self.salt);
+        // Legacy v11/v12 headers never committed to the salt (the field was
+        // unused at that time). Preserve that hashing for backward-compatible
+        // decryption; v13/v14 and non-chunked always include salt.
+        if !self.legacy_chunk_hmac {
+            h.update(self.salt);
+        }
         h.update(self.argon2_str().as_bytes());
         if let Some(chunk_count) = self.chunk_count {
             h.update(chunk_count.to_string().as_bytes());
@@ -272,6 +289,7 @@ impl Header {
                     ciphertext_hash: Some(ciphertext_hash),
                     argon2_params,
                     chunk_count: None,
+                    legacy_chunk_hmac: false,
                 };
                 let provided_hash =
                     hex::decode(parts[6]).map_err(|_| HeaderError::InvalidFormat)?;
@@ -298,6 +316,7 @@ impl Header {
                     ciphertext_hash: Some(ciphertext_hash),
                     argon2_params,
                     chunk_count: Some(chunk_count),
+                    legacy_chunk_hmac: false,
                 };
                 let provided_hash =
                     hex::decode(parts[7]).map_err(|_| HeaderError::InvalidFormat)?;
@@ -309,7 +328,36 @@ impl Header {
                 }
                 Ok((header, remaining))
             }
-            VERSION_ENCRYPTED | VERSION_CHUNKED_ENCRYPTED => Err(HeaderError::EncryptedHeader),
+            LEGACY_VERSION_CHUNKED_PLAIN if parts.len() == 7 => {
+                // v11 from v0.7.0: no file salt field, HMAC keyed per-chunk.
+                let algorithms = parse_algos(parts[2])?;
+                let argon2_params = parse_argon2(parts[3])?;
+                let chunk_count: u64 = parts[4]
+                    .parse()
+                    .map_err(|_| HeaderError::InvalidFormat)?;
+                let ciphertext_hash = parse_hash(parts[5])?;
+                let header = Self {
+                    algorithms,
+                    salt: [0u8; 32], // unused for v11 legacy
+                    locked: false,
+                    ciphertext_hash: Some(ciphertext_hash),
+                    argon2_params,
+                    chunk_count: Some(chunk_count),
+                    legacy_chunk_hmac: true,
+                };
+                let provided_hash =
+                    hex::decode(parts[6]).map_err(|_| HeaderError::InvalidFormat)?;
+                let expected_hash = header.compute_hash_bytes();
+                if provided_hash.len() != 32
+                    || provided_hash.as_slice().ct_eq(&expected_hash).unwrap_u8() != 1
+                {
+                    return Err(HeaderError::HashMismatch);
+                }
+                Ok((header, remaining))
+            }
+            VERSION_ENCRYPTED
+            | VERSION_CHUNKED_ENCRYPTED
+            | LEGACY_VERSION_CHUNKED_ENCRYPTED => Err(HeaderError::EncryptedHeader),
             v => Err(HeaderError::UnsupportedVersion(v)),
         }
     }
@@ -343,9 +391,13 @@ impl Header {
         }
 
         let version: u8 = parts[1].parse().map_err(|_| HeaderError::InvalidFormat)?;
-        if version != VERSION_ENCRYPTED && version != VERSION_CHUNKED_ENCRYPTED {
+        if version != VERSION_ENCRYPTED
+            && version != VERSION_CHUNKED_ENCRYPTED
+            && version != LEGACY_VERSION_CHUNKED_ENCRYPTED
+        {
             return Err(HeaderError::UnsupportedVersion(version));
         }
+        let is_legacy_chunked = version == LEGACY_VERSION_CHUNKED_ENCRYPTED;
 
         // Verify header hash (constant-time comparison)
         let mut h = Sha256::new();
@@ -378,6 +430,7 @@ impl Header {
                 ciphertext_hash: Some(ciphertext_hash),
                 argon2_params: payload.argon2,
                 chunk_count: payload.chunk_count,
+                legacy_chunk_hmac: is_legacy_chunked,
             },
             remaining,
         ))
@@ -389,7 +442,7 @@ impl Header {
             .map(|(p, _)| {
                 p.len() >= 3
                     && p[0] == MAGIC
-                    && (p[1] == "8" || p[1] == "14")
+                    && (p[1] == "8" || p[1] == "12" || p[1] == "14")
                     && p[2] == "E"
             })
             .unwrap_or(false)
@@ -398,7 +451,11 @@ impl Header {
     #[must_use]
     pub fn is_chunked(data: &[u8]) -> bool {
         parse_header_line(data)
-            .map(|(p, _)| p.len() >= 2 && p[0] == MAGIC && (p[1] == "13" || p[1] == "14"))
+            .map(|(p, _)| {
+                p.len() >= 2
+                    && p[0] == MAGIC
+                    && (p[1] == "11" || p[1] == "12" || p[1] == "13" || p[1] == "14")
+            })
             .unwrap_or(false)
     }
 }

@@ -4,6 +4,32 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.1] - 2026-04-14
+
+### Security
+- **Fixed:** Cross-file chunk splicing in chunked encryption (v11/v12). The per-chunk HMAC key was derived from `HKDF(password, chunk_salt)` with the chunk salt traveling inside each frame, so a frame from file A was a valid frame in any other file that shared the same password and algorithm cascade. An attacker with access to two such ciphertexts could transplant chunks between them — producing a file where every integrity check (per-chunk HMAC, full-file hash, header hash) passed, but which decrypted to a recombination of plaintext from the source files. Found by adversarial review (`kelly-review.md`, finding K-1) and verified by constructed exploit.
+- **Fix:** The HMAC key is now derived per-file from `HKDF(password, file_salt)` where `file_salt` is a fresh 32-byte random value stored in the header. In v13 (plaintext chunked) the salt is a new header field covered by the header hash. In v14 (encrypted chunked) the salt lives in the ChaCha20-Poly1305-authenticated `EncryptedPayload`. The key is derived once per file and reused for every chunk, so the per-chunk HKDF call is also removed — net simpler and net safer.
+- HKDF domain separator changed from `"cascrypt-chunk-hmac"` to `"cascrypt-file-hmac"` to reflect the new binding.
+- The per-chunk `chunk_salt` is retained — it still drives Argon2id cascade key derivation for each chunk's independent cipher stack. Only the HMAC keying changed.
+
+### Added
+- Header versions **v13** (plaintext chunked) and **v14** (encrypted chunked) — emitted by all chunked encryption in v0.7.1+.
+- `legacy_chunk_hmac` internal flag on `Header` so the decryption path can route v11/v12 files through the legacy per-chunk HMAC derivation.
+- Backward-compatible decryption of v11/v12 files (from v0.7.0): `decrypt_chunked` detects the legacy version, uses the old `HKDF(password, chunk_salt)` HMAC keying, and validates as before. Legacy files remain vulnerable to the splicing attack described above — re-encrypt with v0.7.1 to gain the new protection.
+- Test `test_legacy_v11_backward_compat` synthesises a v11-format chunked file and verifies it decrypts under v0.7.1.
+
+### Changed
+- `Header::with_chunks()` now takes `salt` as a required parameter (was generated internally). Callers must pass the same file salt to both the placeholder and the final header rewrite.
+- `Header::compute_hash_bytes()` hashes `self.salt` except when `legacy_chunk_hmac` is set (preserving the v11/v12 hash recipe for backward-compat verification).
+- `header.salt` parsed from v13 headers is the real file salt (in v11 the field was a discarded placeholder).
+- `Header::is_chunked()` now returns true for versions 11, 12, 13, and 14; `Header::is_encrypted()` now recognises 8, 12, and 14.
+
+### Compatibility
+- **v0.7.0 chunked files (v11/v12) continue to decrypt** under v0.7.1 — no re-encryption required to read your archive.
+- **New encryptions emit v13/v14.** v0.7.0 and earlier cannot decrypt files produced by v0.7.1+ (forward-only compatibility).
+- The v0.6.1 encoder change (8-byte length prefix) remains in effect — files from v0.6.0 or earlier must be decrypted with the prior version first.
+- Non-chunked files (v7/v8 headers) are unaffected by this release.
+
 ## [0.7.0] - 2026-03-27
 
 ### Added
