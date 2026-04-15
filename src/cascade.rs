@@ -187,7 +187,7 @@ where
     if algorithms.is_empty() {
         return Err(CascadeError::NoAlgorithms);
     }
-    let salt: [u8; 32] = rand::thread_rng().gen();
+    let salt: [u8; 32] = rand::rng().random();
     let encrypted = encrypt_layers(
         data,
         password,
@@ -261,7 +261,7 @@ where
     if algorithms.is_empty() {
         return Err(CascadeError::NoAlgorithms);
     }
-    let salt: [u8; 32] = rand::thread_rng().gen();
+    let salt: [u8; 32] = rand::rng().random();
     let encrypted = encrypt_layers(
         data,
         password,
@@ -431,7 +431,7 @@ mod tests {
     use rand::Rng;
 
     fn random_password() -> Vec<u8> {
-        let bytes: [u8; 16] = rand::thread_rng().gen();
+        let bytes: [u8; 16] = rand::rng().random();
         bytes.to_vec()
     }
 

@@ -83,7 +83,7 @@ impl_json_serde!(HybridKeypair, HybridPublicKey, HybridPrivateKey);
 
 impl HybridKeypair {
     pub fn generate() -> Self {
-        let x25519_secret = StaticSecret::random_from_rng(rand::thread_rng());
+        let x25519_secret = StaticSecret::random();
         let x25519_public = X25519Public::from(&x25519_secret);
         let (kyber_pk, kyber_sk) = mlkem1024::keypair();
         HybridKeypair {
@@ -123,7 +123,7 @@ pub fn encrypt(
     recipient_public: &HybridPublicKey,
 ) -> Result<(EncapsulatedKeys, Vec<u8>), HybridError> {
     // Generate ephemeral X25519 keypair
-    let x25519_ephemeral = EphemeralSecret::random_from_rng(rand::thread_rng());
+    let x25519_ephemeral = EphemeralSecret::random();
     let x25519_ephemeral_public = X25519Public::from(&x25519_ephemeral);
 
     // Perform X25519 key exchange
@@ -139,7 +139,7 @@ pub fn encrypt(
     let symmetric_key = derive_symmetric_key(x25519_shared.as_bytes(), kyber_shared.as_bytes())?;
 
     // Generate nonce
-    let nonce_bytes: [u8; 12] = rand::thread_rng().gen();
+    let nonce_bytes: [u8; 12] = rand::rng().random();
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     // Encrypt plaintext with ChaCha20-Poly1305

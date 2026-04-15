@@ -198,7 +198,7 @@ macro_rules! cbc_impl {
                 });
             }
             let mut iv = [0u8; $iv_size];
-            rand::thread_rng().fill_bytes(&mut iv);
+            rand::rng().fill_bytes(&mut iv);
             let cipher = Encryptor::<$cipher>::new_from_slices(key, &iv)
                 .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
 
@@ -281,7 +281,7 @@ macro_rules! aead_impl {
             let cipher = <$cipher>::new_from_slice(key)
                 .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
             let mut nonce = [0u8; $nonce_size];
-            rand::thread_rng().fill_bytes(&mut nonce);
+            rand::rng().fill_bytes(&mut nonce);
             let ct = cipher
                 .encrypt(GenericArray::from_slice(&nonce), plaintext)
                 .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
@@ -336,7 +336,7 @@ macro_rules! cipher05_cbc_impl {
             let cipher = <$cipher>::new_from_slice(key)
                 .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
             let mut iv = [0u8; $block_size];
-            rand::thread_rng().fill_bytes(&mut iv);
+            rand::rng().fill_bytes(&mut iv);
             let padding_len = $block_size - (plaintext.len() % $block_size);
             let mut buffer = vec![padding_len as u8; plaintext.len() + padding_len];
             buffer[..plaintext.len()].copy_from_slice(plaintext);
@@ -432,7 +432,7 @@ fn ascon_encrypt(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, CryptoError> {
     })?;
     let cipher = AsconAead128::new(&key_arr.into());
     let mut nonce = [0u8; NONCE_SIZE];
-    rand::thread_rng().fill_bytes(&mut nonce);
+    rand::rng().fill_bytes(&mut nonce);
     let ct = cipher
         .encrypt(&nonce.into(), plaintext)
         .map_err(|e| CryptoError::EncryptionFailed(e.to_string()))?;
