@@ -551,7 +551,7 @@ mod tests {
     use rand::Rng;
 
     fn random_salt() -> [u8; 32] {
-        rand::thread_rng().gen()
+        rand::rng().random()
     }
 
     #[test]

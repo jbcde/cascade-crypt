@@ -4,6 +4,26 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.2] - 2026-04-15
+
+### Security
+- **Fixed:** Closed RUSTSEC-2026-0097 (`rand 0.8.5` unsoundness advisory) by migrating to `rand 0.9`. The specific unsound pattern flagged by the advisory (`rand::rng()` with a custom logger) was not reachable from cascrypt's usage — cascrypt on `rand 0.8` never called `rand::rng()` (that function is 0.9-only) — but the crate-level version match kept the advisory flagged. Bumping to `rand 0.9` removes the flag and brings cascrypt onto the current supported RNG API.
+- Refreshed dependency lockfile: transitive minor/patch bumps for `bitflags`, `cc`, `fastrand`, `hashbrown`, `hybrid-array`, `indexmap`, `libc`, `rand_core`, `rayon`, `rtoolbox`, `semver`, `zerocopy`, and `zerocopy-derive`. Fuzz workspace `Cargo.lock` refreshed in parallel.
+
+### Changed
+- `rand` dependency: `"0.8"` → `"0.9"`. API migration across 7 files:
+  - `rand::thread_rng()` → `rand::rng()`
+  - `Rng::gen()` → `Rng::random()` (avoids collision with the `gen` keyword reserved in Rust 2024)
+  - `rand::seq::SliceRandom` (for `.choose()`) → `rand::seq::IndexedRandom` (trait split in 0.9)
+- `x25519-dalek`: enabled `getrandom` feature so `StaticSecret::random()` and `EphemeralSecret::random()` are available without requiring `rand_core 0.6` trait bridging. Replaces `random_from_rng(rand::thread_rng())` at `hybrid.rs:86` and `hybrid.rs:126` — same cryptographic behavior, different plumbing.
+
+### Known issues
+- `crypto-common 0.2.0` remains pinned (yanked from crates.io). Upstream `0.2.1` removed `BlockSizes`, `Block`, and `ParBlocksSizeUser` types that `cipher 0.5.0-rc.6` depends on — updating `crypto-common` would require unpinning the cipher 0.5 pre-release crates, which cannot be done without breaking the six cipher algorithms that ride on that ecosystem. Status is unchanged from v0.7.1.
+
+### Compatibility
+- **No wire format changes.** v0.7.1 files decrypt under v0.7.2 without modification; v0.7.2 files decrypt under v0.7.1 without modification.
+- No changes to the public library API — the `rand` migration is internal. Callers using `cascrypt` as a library see identical function signatures and identical cryptographic properties (same ciphers, same key derivation, same integrity constructions). Only the RNG backend supplying randomness to nonces, IVs, and salts was swapped, which is invisible on the wire.
+
 ## [0.7.1] - 2026-04-14
 
 ### Security

@@ -149,7 +149,7 @@ where
     // File-level salt: drives the per-file HMAC key, covered by the header hash
     // (v13) or the authenticated encrypted payload (v14). Generated once and held
     // stable across placeholder and final header writes.
-    let file_salt: [u8; 32] = rand::thread_rng().gen();
+    let file_salt: [u8; 32] = rand::rng().random();
     let hmac_key = derive_file_hmac_key(password, &file_salt);
 
     // Write placeholder header — we'll seek back to overwrite with final hash.
@@ -193,7 +193,7 @@ where
         let bytes_read = read_full(input, &mut buf)?;
         let chunk_data = &buf[..bytes_read];
 
-        let salt: [u8; 32] = rand::thread_rng().gen();
+        let salt: [u8; 32] = rand::rng().random();
         let ciphertext = encrypt_layers(
             chunk_data, password, algorithms, &salt, locked, buffer_mode, |_, _| {},
         )?;
@@ -555,7 +555,7 @@ mod tests {
     }
 
     fn random_password() -> Vec<u8> {
-        let bytes: [u8; 16] = rand::thread_rng().gen();
+        let bytes: [u8; 16] = rand::rng().random();
         bytes.to_vec()
     }
 

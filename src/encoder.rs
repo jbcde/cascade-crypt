@@ -47,7 +47,7 @@ pub fn encode(data: &[u8]) -> String {
     // Add random padding
     if padding_len > 0 {
         let mut padding = vec![0u8; padding_len];
-        rand::thread_rng().fill_bytes(&mut padding);
+        rand::rng().fill_bytes(&mut padding);
         padded.extend_from_slice(&padding);
     }
 

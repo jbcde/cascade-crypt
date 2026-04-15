@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
 use std::fs;
 use std::io::{self, Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -394,7 +394,7 @@ const LONG_FLAGS: &[(&str, Algorithm)] = &[
 
 /// Generate N randomly selected algorithms (with duplicates allowed)
 fn generate_random_algorithms(count: usize) -> Vec<Algorithm> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     (0..count)
         .map(|_| *ALL_ALGORITHMS.choose(&mut rng).unwrap())
         .collect()
