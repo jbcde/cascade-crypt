@@ -166,6 +166,12 @@ The algorithm order and salt are now encrypted. An attacker sees only:
 [CCRYPT|8|E|<encrypted_keys>|<encrypted_metadata>|<ciphertext_hash>|<header_hash>]
 ```
 
+### Important: `--pubkey` does not authenticate the sender
+
+Protected headers provide **confidentiality** — only the holder of the private key can decrypt the header and recover the file. They do **not** provide **sender authenticity** — anyone who has your public key can encrypt a file to you. You cannot determine who encrypted a given file from the header alone.
+
+If you need to verify the sender, sign the encrypted file externally (e.g., with `minisign`, `gpg --sign`, or `age`).
+
 ### Protected Decryption
 
 Decrypt using your private key (full keypair file):
@@ -261,6 +267,7 @@ cascrypt -s -d -i secret.enc -o secret.bin
 - **Hybrid encryption** combines classical and post-quantum security for header protection
 - **Cross-platform** auto-chunking works on Linux, macOS, and Windows
 - **Quantum resistance**: Grover's algorithm halves effective key strength. 256-bit ciphers remain secure (128-bit post-quantum). Avoid using *only* 128-bit ciphers (`-F -I -4 -E -6 -J -N`) if quantum resistance matters—include at least one 256-bit cipher in your cascade.
+- **AES requires AES-NI for constant-time operation.** On CPUs without AES-NI (pre-2010 x86, some VMs, older ARM), the AES software fallback uses table lookups vulnerable to cache-timing side channels. If you are on such hardware, prefer ChaCha20-based algorithms (`-C`, `-X`) which are constant-time in their pure-Rust implementation.
 
 ## Limitations
 

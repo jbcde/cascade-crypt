@@ -461,7 +461,9 @@ impl Header {
 }
 
 fn parse_header_line(data: &[u8]) -> Result<(Vec<&str>, &[u8]), HeaderError> {
-    let end = data
+    const MAX_HEADER_LINE: usize = 64 * 1024;
+    let search_limit = data.len().min(MAX_HEADER_LINE);
+    let end = data[..search_limit]
         .iter()
         .position(|&b| b == b'\n')
         .ok_or(HeaderError::InvalidFormat)?;

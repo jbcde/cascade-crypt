@@ -63,7 +63,7 @@ fn expand_combined_flags(args: Vec<String>) -> Vec<String> {
 use cascrypt::{
     buffer::detect_cow_filesystem, chunked, decrypt_protected_with_buffer_mode,
     decrypt_with_buffer_mode, encrypt_protected_with_buffer_mode, encrypt_with_buffer_mode,
-    Algorithm, BufferMode, HybridKeypair, HybridPrivateKey, HybridPublicKey,
+    memlock, Algorithm, BufferMode, HybridKeypair, HybridPrivateKey, HybridPublicKey,
 };
 
 const ALL_ALGORITHMS: [Algorithm; 20] = [
@@ -427,6 +427,16 @@ fn is_64bit_block(algo: Algorithm) -> bool {
 fn get_password(cli: &Cli) -> Result<Zeroizing<Vec<u8>>> {
     // Priority: keyfile > interactive prompt
     if let Some(keyfile) = &cli.keyfile {
+        const MAX_KEYFILE: u64 = 1_048_576;
+        let meta = fs::metadata(keyfile)
+            .with_context(|| format!("Failed to read keyfile: {}", keyfile.display()))?;
+        if meta.len() > MAX_KEYFILE {
+            anyhow::bail!(
+                "Keyfile is {} bytes — exceeds 1 MiB limit.\n\
+                 Keyfiles should contain a password or key material, not bulk data.",
+                meta.len()
+            );
+        }
         let key = fs::read(keyfile).context("Failed to read keyfile")?;
         return Ok(Zeroizing::new(key));
     }
@@ -527,6 +537,51 @@ fn write_key_file(path: &Path, data: &str) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(path, fs::Permissions::from_mode(0o600))
             .with_context(|| format!("Failed to set permissions on {:?}", path))?;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use std::ptr;
+        #[link(name = "advapi32")]
+        extern "system" {
+            fn SetFileSecurityW(
+                lpFileName: *const u16,
+                SecurityInformation: u32,
+                pSecurityDescriptor: *const u8,
+            ) -> i32;
+        }
+        #[link(name = "advapi32")]
+        extern "system" {
+            fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                StringSecurityDescriptor: *const u16,
+                StringSDRevision: u32,
+                SecurityDescriptor: *mut *mut u8,
+                SecurityDescriptorSize: *mut u32,
+            ) -> i32;
+        }
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn LocalFree(hMem: *mut u8) -> *mut u8;
+        }
+        // SDDL: owner-only full control, deny everyone else
+        let sddl: Vec<u16> = "D:P(A;;FA;;;OW)"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut sd: *mut u8 = ptr::null_mut();
+        let ok = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(), 1, &mut sd, ptr::null_mut(),
+            )
+        };
+        if ok != 0 {
+            let path_wide: Vec<u16> = path.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+            const DACL_SECURITY_INFORMATION: u32 = 4;
+            unsafe {
+                SetFileSecurityW(path_wide.as_ptr(), DACL_SECURITY_INFORMATION, sd);
+                LocalFree(sd);
+            }
+        }
     }
     Ok(())
 }
@@ -695,6 +750,10 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
 
                 finish_progress(show_progress);
                 if !cli.silent {
+                    if memlock::mlock_warning_needed() {
+                        eprintln!("Warning: memory locking (mlock) failed — derived keys may be swapped to disk.");
+                        eprintln!("  Typically means RLIMIT_MEMLOCK is too low or the process lacks CAP_IPC_LOCK.");
+                    }
                     eprintln!("✓ Decryption complete.");
                 }
                 return Ok(());
@@ -920,6 +979,10 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
         }
     }
 
+    if !cli.silent && memlock::mlock_warning_needed() {
+        eprintln!("Warning: memory locking (mlock) failed — derived keys may be swapped to disk.");
+        eprintln!("  Typically means RLIMIT_MEMLOCK is too low or the process lacks CAP_IPC_LOCK.");
+    }
     Ok(())
 }
 
