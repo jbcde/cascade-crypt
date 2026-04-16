@@ -4,6 +4,19 @@ All notable changes to cascrypt will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.3] - 2026-04-15
+
+### Security
+- **Fixed:** Tightened `MAX_ARGON2_M_COST` from 4 GiB to 1 GiB (`kelly-report-2.md`, finding K-9). An attacker-crafted header specifying maximum `m_cost` combined with Rayon's parallel key derivation could force `parallel_threads × m_cost` bytes of memory allocation during decrypt — on an 8-core machine, 16 GiB of Argon2id memory before any ciphertext was touched, enough to OOM a 16 GiB workstation. The new 1 GiB cap reduces worst-case to 4 GiB on the same machine. Default encryption params (64 MiB) are unaffected; no legitimate file uses m_cost above 1 GiB.
+- **Fixed:** Tightened `MAX_CHUNK_COUNT` from `u32::MAX` (~4.29 billion) to `2^40` (~1.1 trillion) (`kelly-report-2.md`, finding K-10). Each chunk requires independent Argon2id key derivation on decrypt — an attacker delivering a file claiming billions of chunks could pin the victim's CPU for hours to years of sustained compute. The new ceiling still covers any plausible file (1 EB at 1 MiB chunks = 10^12, within 2^40) while cutting the attacker's compute-DoS budget by a factor of ~16 million.
+
+### Changed
+- `MAX_ARGON2_M_COST` cap applies only to header parsing on decrypt — encryption always uses `Argon2Params::default()` (64 MiB, hardcoded) and is unaffected.
+- `MAX_CHUNK_COUNT` cap applies only to chunked header parsing on decrypt — encryption computes chunk count from `ceil(file_size / chunk_size)` and is unaffected.
+
+### Compatibility
+- **No wire format changes.** All files encrypted by any prior version decrypt under v0.7.3. No legitimate file's Argon2 params or chunk count approaches the new caps.
+
 ## [0.7.2] - 2026-04-15
 
 ### Security
