@@ -1,5 +1,6 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use rand::RngCore;
+use std::io::{self, Read, Write};
 use zeroize::Zeroizing;
 
 #[derive(Debug)]
@@ -72,6 +73,26 @@ pub fn decode(encoded: &str) -> Result<Zeroizing<Vec<u8>>, DecodeError> {
     }
 
     Err(DecodeError::InvalidFormat)
+}
+
+/// Streaming base64 decode: read length-prefixed base64 from `input`, write
+/// the extracted payload to `output`. RAM usage is O(copy buffer size),
+/// independent of total data size. Used by the K-2 mmap decrypt path to emit
+/// plaintext without materializing it in memory.
+pub fn decode_streaming<R: Read, W: Write>(input: R, output: &mut W) -> io::Result<u64> {
+    let mut decoder = base64::read::DecoderReader::new(input, &STANDARD);
+    let mut prefix = [0u8; PREFIX_LEN];
+    decoder.read_exact(&mut prefix)?;
+    let len = u64::from_le_bytes(prefix);
+    let mut limited = decoder.take(len);
+    let written = io::copy(&mut limited, output)?;
+    if written != len {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "base64 stream truncated before declared length",
+        ));
+    }
+    Ok(written)
 }
 
 #[cfg(test)]

@@ -7,6 +7,71 @@ use zeroize::Zeroizing;
 
 pub use secure_temp::{detect_cow_filesystem, SecureTempFile};
 
+/// mmap-backed layer processing: the caller-provided function writes plaintext
+/// directly into the output file's memory-mapped region, avoiding the per-layer
+/// Vec allocation that causes OOM on large non-chunked files (K-2).
+///
+/// `current_file` is mmap'd read-only as input; `next_file` is sized to match
+/// and mmap'd read-write as output. `f` receives `(input_slice, output_slice)`
+/// and returns the number of valid output bytes. After the call, `next_file`
+/// is truncated to that length and `current_file` is securely wiped.
+pub fn process_mmap<F, E>(
+    current_file: &mut SecureTempFile,
+    next_file: &mut SecureTempFile,
+    f: F,
+) -> Result<(), ProcessError<E>>
+where
+    F: FnOnce(&[u8], &mut [u8]) -> Result<usize, E>,
+{
+    let in_len = current_file.len().map_err(ProcessError::Io)?;
+    if in_len == 0 {
+        return Err(ProcessError::Io(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "empty layer input",
+        )));
+    }
+
+    // Size output file to match input (upper bound on cipher output size).
+    next_file.set_len(in_len).map_err(ProcessError::Io)?;
+
+    let valid_len = {
+        // SAFETY: mmap on a file we own exclusively during this call. No other
+        // process or thread mutates the file while the mapping is live. The
+        // mappings are dropped before we truncate below.
+        let in_map = unsafe {
+            memmap2::Mmap::map(current_file.file()).map_err(ProcessError::Io)?
+        };
+        let mut out_map = unsafe {
+            memmap2::MmapMut::map_mut(next_file.file()).map_err(ProcessError::Io)?
+        };
+        let valid = f(&in_map, &mut out_map).map_err(ProcessError::Crypto)?;
+        out_map.flush().map_err(ProcessError::Io)?;
+        valid
+        // in_map and out_map drop here (munmap)
+    };
+
+    next_file
+        .set_len(valid_len as u64)
+        .map_err(ProcessError::Io)?;
+    current_file.wipe().map_err(ProcessError::Io)?;
+    Ok(())
+}
+
+/// mmap-backed in-place byte transform: apply `f` to every byte of the file's
+/// memory-mapped region. Used for the puzzle-lock reversal step.
+pub fn transform_in_place_mmap<F>(file: &mut SecureTempFile, mut f: F) -> io::Result<()>
+where
+    F: FnMut(u8) -> u8,
+{
+    // SAFETY: we own the file for the duration of this call.
+    let mut map = unsafe { memmap2::MmapMut::map_mut(file.file())? };
+    for b in map.iter_mut() {
+        *b = f(*b);
+    }
+    map.flush()?;
+    Ok(())
+}
+
 /// Error type for LayerBuffer::process operations.
 ///
 /// This wraps both IO errors from disk operations and crypto errors from the
@@ -98,7 +163,7 @@ fn can_allocate(size: usize) -> bool {
 }
 
 /// Get available memory in bytes. Cross-platform: Linux, macOS, Windows.
-pub(crate) fn get_available_memory() -> Option<usize> {
+pub fn get_available_memory() -> Option<usize> {
     get_available_memory_platform()
 }
 
