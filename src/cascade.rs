@@ -10,6 +10,14 @@ use crate::buffer::{
     process_mmap, should_switch_to_disk, transform_in_place_mmap, BufferMode, LayerBuffer,
     ProcessError, SecureTempFile,
 };
+
+/// Maximum bytes to read when peeking at a file header. Matches the 64 KiB cap
+/// enforced by `header::parse_header_line` (K-4).
+const HEADER_PEEK_LEN: usize = 64 * 1024;
+
+/// Buffer size for streaming the ciphertext body from the input file into the
+/// initial temp file while computing the integrity hash incrementally.
+const STREAM_COPY_BUF_LEN: usize = 64 * 1024;
 use crate::crypto::{self, Algorithm, CryptoError};
 use crate::encoder;
 use crate::header::{Argon2Params, Header, HeaderError};
@@ -445,7 +453,7 @@ where
 /// base64-encoded plaintext (the encoder layer hasn't been reversed). The
 /// caller is responsible for UTF-8 validation, puzzle-lock reversal is handled
 /// here if `header.locked`, and base64 decoding to the output sink.
-pub fn decrypt_layers_mmap<F>(
+pub(crate) fn decrypt_layers_mmap<F>(
     header: &Header,
     ciphertext_file: SecureTempFile,
     password: &[u8],
@@ -520,8 +528,8 @@ where
 
     let mut file = File::open(input_path).map_err(CascadeError::Io)?;
 
-    // Peek: header line is capped at 64 KiB (K-4), so this is sufficient.
-    let mut peek = vec![0u8; 65536];
+    // Peek: header line is capped at HEADER_PEEK_LEN (K-4), so this is sufficient.
+    let mut peek = vec![0u8; HEADER_PEEK_LEN];
     let n = file.read(&mut peek).map_err(CascadeError::Io)?;
     peek.truncate(n);
 
@@ -539,7 +547,7 @@ where
         .map_err(CascadeError::Io)?;
     let mut temp = SecureTempFile::new().map_err(CascadeError::Io)?;
     let mut hasher = Sha256::new();
-    let mut buf = vec![0u8; 65536];
+    let mut buf = vec![0u8; STREAM_COPY_BUF_LEN];
     loop {
         let n = file.read(&mut buf).map_err(CascadeError::Io)?;
         if n == 0 {
@@ -575,8 +583,12 @@ where
         ))
     })?;
 
-    encoder::decode_streaming(Cursor::new(&result_mmap[..]), output)
-        .map_err(CascadeError::Io)?;
+    encoder::decode_streaming(Cursor::new(&result_mmap[..]), output).map_err(|e| match e {
+        encoder::DecodeError::Io(io) => CascadeError::Io(io),
+        _ => CascadeError::Crypto(CryptoError::DecryptionFailed(
+            "Decryption failed - wrong password or corrupted data".into(),
+        )),
+    })?;
 
     Ok(())
 }

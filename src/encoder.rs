@@ -7,6 +7,7 @@ use zeroize::Zeroizing;
 pub enum DecodeError {
     Base64(base64::DecodeError),
     InvalidFormat,
+    Io(io::Error),
 }
 
 impl From<base64::DecodeError> for DecodeError {
@@ -15,11 +16,18 @@ impl From<base64::DecodeError> for DecodeError {
     }
 }
 
+impl From<io::Error> for DecodeError {
+    fn from(e: io::Error) -> Self {
+        DecodeError::Io(e)
+    }
+}
+
 impl std::fmt::Display for DecodeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DecodeError::Base64(e) => write!(f, "Base64 decode error: {}", e),
             DecodeError::InvalidFormat => write!(f, "Invalid encoded format"),
+            DecodeError::Io(e) => write!(f, "I/O error during decode: {}", e),
         }
     }
 }
@@ -79,7 +87,7 @@ pub fn decode(encoded: &str) -> Result<Zeroizing<Vec<u8>>, DecodeError> {
 /// the extracted payload to `output`. RAM usage is O(copy buffer size),
 /// independent of total data size. Used by the K-2 mmap decrypt path to emit
 /// plaintext without materializing it in memory.
-pub fn decode_streaming<R: Read, W: Write>(input: R, output: &mut W) -> io::Result<u64> {
+pub fn decode_streaming<R: Read, W: Write>(input: R, output: &mut W) -> Result<u64, DecodeError> {
     let mut decoder = base64::read::DecoderReader::new(input, &STANDARD);
     let mut prefix = [0u8; PREFIX_LEN];
     decoder.read_exact(&mut prefix)?;
@@ -87,10 +95,7 @@ pub fn decode_streaming<R: Read, W: Write>(input: R, output: &mut W) -> io::Resu
     let mut limited = decoder.take(len);
     let written = io::copy(&mut limited, output)?;
     if written != len {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "base64 stream truncated before declared length",
-        ));
+        return Err(DecodeError::InvalidFormat);
     }
     Ok(written)
 }

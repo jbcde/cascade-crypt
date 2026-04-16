@@ -506,7 +506,8 @@ fn get_cipher_fns(algo: Algorithm) -> (CipherFn, CipherFn) {
 // into a caller-provided output buffer (backed by mmap) instead of returning
 // Vec<u8>, avoiding the per-layer RAM allocation that causes OOM on large files.
 
-pub type MmapDecryptFn = fn(key: &[u8], input: &[u8], output: &mut [u8]) -> Result<usize, CryptoError>;
+pub(crate) type MmapDecryptFn =
+    fn(key: &[u8], input: &[u8], output: &mut [u8]) -> Result<usize, CryptoError>;
 
 fn validate_pkcs7_ct(buffer: &[u8], block_size: usize) -> Result<usize, CryptoError> {
     let last_byte = *buffer
@@ -557,18 +558,23 @@ macro_rules! cbc_mmap_dec {
 
 macro_rules! aead_mmap_dec {
     ($cipher:ty, $nonce_size:expr) => {{
-        use aes_gcm::aead::{generic_array::GenericArray, AeadInPlace, KeyInit};
-        const TAG_LEN: usize = 16;
+        use aes_gcm::aead::{
+            generic_array::{typenum::Unsigned, GenericArray},
+            AeadCore, AeadInPlace, KeyInit,
+        };
 
         fn dec_mmap(key: &[u8], input: &[u8], output: &mut [u8]) -> Result<usize, CryptoError> {
+            // Derive tag length from the cipher's associated type so a future
+            // AEAD with a different tag size stays correct without touching this code.
+            let tag_len = <<$cipher as AeadCore>::TagSize as Unsigned>::USIZE;
             if key.len() != 32 {
                 return Err(CryptoError::InvalidKeyLength { expected: 32, got: key.len() });
             }
-            if input.len() < $nonce_size + TAG_LEN {
+            if input.len() < $nonce_size + tag_len {
                 return Err(CryptoError::InvalidNonce);
             }
             let (nonce, rest) = input.split_at($nonce_size);
-            let ct_len = rest.len() - TAG_LEN;
+            let ct_len = rest.len() - tag_len;
             let (ct, tag) = rest.split_at(ct_len);
             output[..ct_len].copy_from_slice(ct);
             <$cipher>::new_from_slice(key)
@@ -657,7 +663,7 @@ fn ascon_decrypt_mmap(key: &[u8], input: &[u8], output: &mut [u8]) -> Result<usi
     Ok(ct_len)
 }
 
-pub fn decrypt_mmap(
+pub(crate) fn decrypt_mmap(
     algo: Algorithm,
     key: &[u8],
     input: &[u8],

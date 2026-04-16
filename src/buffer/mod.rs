@@ -15,7 +15,7 @@ pub use secure_temp::{detect_cow_filesystem, SecureTempFile};
 /// and mmap'd read-write as output. `f` receives `(input_slice, output_slice)`
 /// and returns the number of valid output bytes. After the call, `next_file`
 /// is truncated to that length and `current_file` is securely wiped.
-pub fn process_mmap<F, E>(
+pub(crate) fn process_mmap<F, E>(
     current_file: &mut SecureTempFile,
     next_file: &mut SecureTempFile,
     f: F,
@@ -59,7 +59,7 @@ where
 
 /// mmap-backed in-place byte transform: apply `f` to every byte of the file's
 /// memory-mapped region. Used for the puzzle-lock reversal step.
-pub fn transform_in_place_mmap<F>(file: &mut SecureTempFile, mut f: F) -> io::Result<()>
+pub(crate) fn transform_in_place_mmap<F>(file: &mut SecureTempFile, mut f: F) -> io::Result<()>
 where
     F: FnMut(u8) -> u8,
 {
