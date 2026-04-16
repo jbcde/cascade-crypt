@@ -103,6 +103,25 @@ impl SecureTempFile {
         self.len().map(|l| l == 0)
     }
 
+    pub fn file(&self) -> &File {
+        &self.file
+    }
+
+    pub fn file_mut(&mut self) -> &mut File {
+        &mut self.file
+    }
+
+    pub fn set_len(&self, size: u64) -> io::Result<()> {
+        self.file.set_len(size)
+    }
+
+    /// Append data to the end of the file. Used for streaming writes.
+    pub fn append(&mut self, data: &[u8]) -> io::Result<()> {
+        self.file.seek(SeekFrom::End(0))?;
+        self.file.write_all(data)?;
+        Ok(())
+    }
+
     /// Securely wipe file contents (overwrite + truncate) without deleting.
     /// Used to clear stale data from the inactive ping-pong file.
     pub fn wipe(&mut self) -> io::Result<()> {

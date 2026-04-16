@@ -61,9 +61,11 @@ fn expand_combined_flags(args: Vec<String>) -> Vec<String> {
 }
 
 use cascrypt::{
-    buffer::detect_cow_filesystem, chunked, decrypt_protected_with_buffer_mode,
-    decrypt_with_buffer_mode, encrypt_protected_with_buffer_mode, encrypt_with_buffer_mode,
-    memlock, Algorithm, BufferMode, HybridKeypair, HybridPrivateKey, HybridPublicKey,
+    buffer::{detect_cow_filesystem, get_available_memory},
+    cascade::decrypt_nonchunked_mmap,
+    chunked, decrypt_protected_with_buffer_mode, decrypt_with_buffer_mode,
+    encrypt_protected_with_buffer_mode, encrypt_with_buffer_mode, memlock, Algorithm, BufferMode,
+    HybridKeypair, HybridPrivateKey, HybridPublicKey,
 };
 
 const ALL_ALGORITHMS: [Algorithm; 20] = [
@@ -748,6 +750,61 @@ fn cmd_encrypt_decrypt(cli: Cli) -> Result<()> {
                     .context("Chunked decryption failed")?;
                 }
 
+                finish_progress(show_progress);
+                if !cli.silent {
+                    if memlock::mlock_warning_needed() {
+                        eprintln!("Warning: memory locking (mlock) failed — derived keys may be swapped to disk.");
+                        eprintln!("  Typically means RLIMIT_MEMLOCK is too low or the process lacks CAP_IPC_LOCK.");
+                    }
+                    eprintln!("✓ Decryption complete.");
+                }
+                return Ok(());
+            }
+        }
+
+        // K-2: for non-chunked files larger than half of available RAM, route
+        // to the mmap-backed decrypt path. Small files keep the current RAM
+        // path unchanged. Stdin stays on the RAM path (can't seek/mmap stdin).
+        if !is_stdin {
+            let file_size = fs::metadata(&input)
+                .with_context(|| format!("Failed to stat input: {}", input.display()))?
+                .len();
+            let available = get_available_memory().unwrap_or(usize::MAX) as u64;
+            if file_size > available / 2 {
+                if !cli.silent {
+                    eprintln!(
+                        "󰀦 Large non-chunked file ({:.1} GiB, exceeds RAM threshold) — using mmap decrypt",
+                        file_size as f64 / (1024.0 * 1024.0 * 1024.0),
+                    );
+                }
+                let private_key = cli
+                    .privkey
+                    .as_ref()
+                    .map(|p| load_private_key(p))
+                    .transpose()?;
+                if is_stdout {
+                    let mut stdout = io::stdout();
+                    decrypt_nonchunked_mmap(
+                        &input,
+                        &mut stdout,
+                        &password,
+                        private_key.as_ref(),
+                        make_progress_cb(show_progress, "󰌊 Decrypting"),
+                    )
+                    .context("Decryption failed")?;
+                } else {
+                    let mut out_file = fs::File::create(&output).with_context(|| {
+                        format!("Failed to create output: {}", output.display())
+                    })?;
+                    decrypt_nonchunked_mmap(
+                        &input,
+                        &mut out_file,
+                        &password,
+                        private_key.as_ref(),
+                        make_progress_cb(show_progress, "󰌊 Decrypting"),
+                    )
+                    .context("Decryption failed")?;
+                }
                 finish_progress(show_progress);
                 if !cli.silent {
                     if memlock::mlock_warning_needed() {

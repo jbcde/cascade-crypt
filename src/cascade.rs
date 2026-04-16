@@ -1,10 +1,23 @@
 use argon2::Argon2;
 use rand::Rng;
 use rayon::prelude::*;
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
-use crate::buffer::{should_switch_to_disk, BufferMode, LayerBuffer, ProcessError};
+use crate::buffer::{
+    process_mmap, should_switch_to_disk, transform_in_place_mmap, BufferMode, LayerBuffer,
+    ProcessError, SecureTempFile,
+};
+
+/// Maximum bytes to read when peeking at a file header. Matches the 64 KiB cap
+/// enforced by `header::parse_header_line` (K-4).
+const HEADER_PEEK_LEN: usize = 64 * 1024;
+
+/// Buffer size for streaming the ciphertext body from the input file into the
+/// initial temp file while computing the integrity hash incrementally.
+const STREAM_COPY_BUF_LEN: usize = 64 * 1024;
 use crate::crypto::{self, Algorithm, CryptoError};
 use crate::encoder;
 use crate::header::{Argon2Params, Header, HeaderError};
@@ -39,6 +52,9 @@ mod _t {
     }
     pub fn _x(d: &[u8]) -> Vec<u8> {
         d.iter().map(|&b| _f(b)).collect()
+    }
+    pub fn _x_byte(b: u8) -> u8 {
+        _f(b)
     }
 }
 
@@ -424,6 +440,159 @@ where
     })
 }
 
+/// Mmap-backed cascade decrypt for large non-chunked files (K-2 fix).
+///
+/// Takes a `SecureTempFile` already populated with the ciphertext body (hash
+/// verified by the caller). Runs each cipher layer by mmap'ing the current
+/// working file read-only as input and a second temp file read-write as output,
+/// invoking `crypto::decrypt_mmap` which writes plaintext directly into the
+/// output mapping. After each layer the files are swapped and the source is
+/// wiped.
+///
+/// Returns the temp file containing the final layer's output — this is still
+/// base64-encoded plaintext (the encoder layer hasn't been reversed). The
+/// caller is responsible for UTF-8 validation, puzzle-lock reversal is handled
+/// here if `header.locked`, and base64 decoding to the output sink.
+pub(crate) fn decrypt_layers_mmap<F>(
+    header: &Header,
+    ciphertext_file: SecureTempFile,
+    password: &[u8],
+    mut progress: F,
+) -> Result<SecureTempFile, CascadeError>
+where
+    F: FnMut(usize, usize),
+{
+    if header.algorithms.is_empty() {
+        return Err(CascadeError::NoAlgorithms);
+    }
+    let total = header.algorithms.len();
+    let keys = derive_keys_parallel(
+        password,
+        &header.salt,
+        &header.algorithms,
+        &header.argon2_params,
+    )?;
+
+    let mut current = ciphertext_file;
+    let mut next = SecureTempFile::new().map_err(CascadeError::Io)?;
+
+    for (i, algo) in header.algorithms.iter().rev().enumerate() {
+        let key_index = total - 1 - i;
+        let key_bytes: &[u8] = keys[key_index].as_ref();
+        let algo_copy = *algo;
+
+        process_mmap(&mut current, &mut next, |input, output| {
+            crypto::decrypt_mmap(algo_copy, key_bytes, input, output)
+        })
+        .map_err(|e| match e {
+            ProcessError::Io(io) => CascadeError::Io(io),
+            ProcessError::Crypto(c) => CascadeError::Crypto(c),
+        })?;
+
+        std::mem::swap(&mut current, &mut next);
+        progress(i + 1, total);
+    }
+
+    if header.locked {
+        transform_in_place_mmap(&mut current, _t::_x_byte).map_err(CascadeError::Io)?;
+    }
+
+    Ok(current)
+}
+
+/// Top-level mmap-backed decrypt for large non-chunked files (K-2 fix).
+///
+/// Bounded RAM regardless of file size. Callers should route here when
+/// `file_size > available_memory / 2`.
+///
+/// Pipeline:
+/// 1. Peek header (bounded 64 KiB read, K-4 cap applies)
+/// 2. Parse header (v7 plaintext or v8 encrypted — the latter needs `private_key`)
+/// 3. Stream body → `SecureTempFile`, verify SHA-256 incrementally
+/// 4. Run `decrypt_layers_mmap` through the cipher cascade
+/// 5. mmap the final layer's output; UTF-8 validate
+/// 6. Stream base64 decode to `output`
+pub fn decrypt_nonchunked_mmap<W, F>(
+    input_path: &std::path::Path,
+    output: &mut W,
+    password: &[u8],
+    private_key: Option<&HybridPrivateKey>,
+    mut progress: F,
+) -> Result<(), CascadeError>
+where
+    W: std::io::Write,
+    F: FnMut(usize, usize),
+{
+    use std::fs::File;
+    use std::io::{Cursor, Read, Seek, SeekFrom};
+
+    let mut file = File::open(input_path).map_err(CascadeError::Io)?;
+
+    // Peek: header line is capped at HEADER_PEEK_LEN (K-4), so this is sufficient.
+    let mut peek = vec![0u8; HEADER_PEEK_LEN];
+    let n = file.read(&mut peek).map_err(CascadeError::Io)?;
+    peek.truncate(n);
+
+    // Parse header
+    let (header, remaining) = if Header::is_encrypted(&peek) {
+        let pk = private_key.ok_or(CascadeError::PrivateKeyRequired)?;
+        Header::parse_encrypted(&peek, pk)?
+    } else {
+        Header::parse(&peek)?
+    };
+    let body_offset = (peek.len() - remaining.len()) as u64;
+
+    // Stream body → temp file, compute SHA-256 incrementally
+    file.seek(SeekFrom::Start(body_offset))
+        .map_err(CascadeError::Io)?;
+    let mut temp = SecureTempFile::new().map_err(CascadeError::Io)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; STREAM_COPY_BUF_LEN];
+    loop {
+        let n = file.read(&mut buf).map_err(CascadeError::Io)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        temp.append(&buf[..n]).map_err(CascadeError::Io)?;
+    }
+
+    let computed: [u8; 32] = hasher.finalize().into();
+    let expected = header.ciphertext_hash.ok_or_else(|| {
+        CascadeError::Crypto(CryptoError::DecryptionFailed(
+            "Missing ciphertext hash".into(),
+        ))
+    })?;
+    if computed.ct_eq(&expected).unwrap_u8() != 1 {
+        return Err(CascadeError::Crypto(CryptoError::DecryptionFailed(
+            "Ciphertext hash mismatch".into(),
+        )));
+    }
+
+    // Cipher cascade via mmap (bounded RAM per layer via page cache)
+    let result_file = decrypt_layers_mmap(&header, temp, password, |i, t| progress(i, t))?;
+
+    // mmap result, UTF-8 validate, stream-decode base64 to output.
+    // SAFETY: we own the temp file; no external mutation during this call.
+    let result_mmap = unsafe {
+        memmap2::Mmap::map(result_file.file()).map_err(CascadeError::Io)?
+    };
+    std::str::from_utf8(&result_mmap).map_err(|_| {
+        CascadeError::Crypto(CryptoError::DecryptionFailed(
+            "Decryption failed - wrong password or corrupted data".into(),
+        ))
+    })?;
+
+    encoder::decode_streaming(Cursor::new(&result_mmap[..]), output).map_err(|e| match e {
+        encoder::DecodeError::Io(io) => CascadeError::Io(io),
+        _ => CascadeError::Crypto(CryptoError::DecryptionFailed(
+            "Decryption failed - wrong password or corrupted data".into(),
+        )),
+    })?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,5 +766,158 @@ mod tests {
         .unwrap();
         let decrypted = decrypt(&encrypted, &password).unwrap();
         assert_eq!(data.as_slice(), decrypted.as_slice());
+    }
+
+    #[test]
+    fn test_mmap_decrypt_roundtrip_mixed_cascade() {
+        // K-2 regression: encrypt via the existing RAM path, then decrypt via
+        // the mmap path and verify byte-identical roundtrip. Exercises the
+        // mmap-in-place variants for both AEAD and CBC cipher families, and
+        // the full decrypt_nonchunked_mmap pipeline (header parse → stream to
+        // temp → hash verify → cascade via mmap → UTF-8 validate → streaming
+        // base64 decode).
+        use std::io::Write;
+
+        let data: Vec<u8> = (0..=255u8).cycle().take(16 * 1024).collect();
+        let password = random_password();
+        let algorithms = vec![
+            Algorithm::Aes256,           // AEAD via aead_mmap_dec
+            Algorithm::Serpent,          // CBC via cbc_mmap_dec
+            Algorithm::ChaCha20Poly1305, // AEAD
+            Algorithm::Threefish256,     // cipher05 CBC via cipher05_cbc_mmap_dec
+        ];
+
+        let encrypted = encrypt(&data, &password, &algorithms).unwrap();
+
+        let tmpdir = std::env::temp_dir();
+        let input_path = tmpdir.join(format!(
+            "cascrypt-mmap-test-{}.enc",
+            rand::rng().random::<u64>()
+        ));
+        {
+            let mut f = std::fs::File::create(&input_path).unwrap();
+            f.write_all(&encrypted).unwrap();
+        }
+
+        let mut output = Vec::new();
+        decrypt_nonchunked_mmap(&input_path, &mut output, &password, None, |_, _| {}).unwrap();
+
+        let _ = std::fs::remove_file(&input_path);
+        assert_eq!(data, output);
+    }
+
+    #[test]
+    fn test_mmap_decrypt_protected_header_roundtrip() {
+        // K-2 regression: v8-encoded non-chunked files with pubkey-protected
+        // headers must decrypt correctly through the mmap path. Header parsing
+        // goes through Header::parse_encrypted (hybrid X25519+ML-KEM decrypt)
+        // before the cascade runs via mmap.
+        use std::io::Write;
+
+        let data: Vec<u8> = (0..=255u8).cycle().take(8 * 1024).collect();
+        let password = random_password();
+        let keypair = HybridKeypair::generate();
+
+        // Encrypt with protected header
+        let encrypted = encrypt_protected(
+            &data,
+            &password,
+            &[Algorithm::Aes256, Algorithm::Serpent, Algorithm::ChaCha20Poly1305],
+            &keypair.public,
+            false,
+        )
+        .unwrap();
+        assert!(Header::is_encrypted(&encrypted));
+
+        let tmpdir = std::env::temp_dir();
+        let input_path = tmpdir.join(format!(
+            "cascrypt-mmap-protected-{}.enc",
+            rand::rng().random::<u64>()
+        ));
+        {
+            let mut f = std::fs::File::create(&input_path).unwrap();
+            f.write_all(&encrypted).unwrap();
+        }
+
+        // Decrypt through the mmap path with the private key
+        let mut output = Vec::new();
+        decrypt_nonchunked_mmap(
+            &input_path,
+            &mut output,
+            &password,
+            Some(&keypair.private),
+            |_, _| {},
+        )
+        .unwrap();
+
+        let _ = std::fs::remove_file(&input_path);
+        assert_eq!(data, output);
+    }
+
+    #[test]
+    fn test_mmap_decrypt_protected_requires_privkey() {
+        // Mmap path must refuse v8 files without a private key, matching the
+        // RAM path's behavior.
+        use std::io::Write;
+
+        let data = b"protected content";
+        let password = random_password();
+        let keypair = HybridKeypair::generate();
+
+        let encrypted = encrypt_protected(
+            data,
+            &password,
+            &[Algorithm::Aes256],
+            &keypair.public,
+            false,
+        )
+        .unwrap();
+
+        let tmpdir = std::env::temp_dir();
+        let input_path = tmpdir.join(format!(
+            "cascrypt-mmap-protected-nokey-{}.enc",
+            rand::rng().random::<u64>()
+        ));
+        {
+            let mut f = std::fs::File::create(&input_path).unwrap();
+            f.write_all(&encrypted).unwrap();
+        }
+
+        let mut output = Vec::new();
+        let result = decrypt_nonchunked_mmap(&input_path, &mut output, &password, None, |_, _| {});
+
+        let _ = std::fs::remove_file(&input_path);
+        assert!(matches!(result, Err(CascadeError::PrivateKeyRequired)));
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn test_mmap_decrypt_wrong_password_fails() {
+        // Wrong password through the mmap path should fail at UTF-8 validation
+        // or hash verification (garbage output), not silently emit garbage.
+        use std::io::Write;
+
+        let data = b"Content that should not leak on wrong password.".to_vec();
+        let password = random_password();
+        let wrong = random_password();
+
+        let encrypted = encrypt(&data, &password, &[Algorithm::Aes256, Algorithm::Serpent]).unwrap();
+
+        let tmpdir = std::env::temp_dir();
+        let input_path = tmpdir.join(format!(
+            "cascrypt-mmap-wrongpw-{}.enc",
+            rand::rng().random::<u64>()
+        ));
+        {
+            let mut f = std::fs::File::create(&input_path).unwrap();
+            f.write_all(&encrypted).unwrap();
+        }
+
+        let mut output = Vec::new();
+        let result = decrypt_nonchunked_mmap(&input_path, &mut output, &wrong, None, |_, _| {});
+
+        let _ = std::fs::remove_file(&input_path);
+        assert!(result.is_err(), "wrong password must not succeed");
+        assert!(output.is_empty(), "no plaintext should be emitted on wrong password");
     }
 }

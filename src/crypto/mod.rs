@@ -501,6 +501,203 @@ fn get_cipher_fns(algo: Algorithm) -> (CipherFn, CipherFn) {
     }
 }
 
+// --- Mmap-backed in-place decrypt (K-2 fix) ---
+// Parallel to the CipherFn-based decrypt path. These write plaintext directly
+// into a caller-provided output buffer (backed by mmap) instead of returning
+// Vec<u8>, avoiding the per-layer RAM allocation that causes OOM on large files.
+
+pub(crate) type MmapDecryptFn =
+    fn(key: &[u8], input: &[u8], output: &mut [u8]) -> Result<usize, CryptoError>;
+
+fn validate_pkcs7_ct(buffer: &[u8], block_size: usize) -> Result<usize, CryptoError> {
+    let last_byte = *buffer
+        .last()
+        .ok_or_else(|| CryptoError::DecryptionFailed("Empty".into()))?;
+    let padding_len = last_byte as usize;
+    let valid = ((padding_len >= 1) as u8) & ((padding_len <= block_size) as u8);
+    let mut bad = valid ^ 1;
+    let check_start = buffer.len() - block_size;
+    let threshold = block_size.saturating_sub(padding_len);
+    for i in 0..block_size {
+        let in_pad = ((i >= threshold) as u8) & valid;
+        bad |= in_pad & (buffer[check_start + i] ^ last_byte);
+    }
+    if bad != 0 {
+        return Err(CryptoError::DecryptionFailed("Invalid padding".into()));
+    }
+    Ok(padding_len)
+}
+
+macro_rules! cbc_mmap_dec {
+    ($cipher:ty, $key_len:expr, $block_size:expr, $iv_size:expr) => {{
+        use cbc::Decryptor;
+        use cipher::{BlockDecryptMut, KeyIvInit};
+
+        fn dec_mmap(key: &[u8], input: &[u8], output: &mut [u8]) -> Result<usize, CryptoError> {
+            if key.len() != $key_len {
+                return Err(CryptoError::InvalidKeyLength { expected: $key_len, got: key.len() });
+            }
+            if input.len() < $iv_size + $block_size {
+                return Err(CryptoError::InvalidNonce);
+            }
+            let (iv, data) = input.split_at($iv_size);
+            if data.is_empty() || data.len() % $block_size != 0 {
+                return Err(CryptoError::DecryptionFailed("Invalid ciphertext length".into()));
+            }
+            output[..data.len()].copy_from_slice(data);
+            Decryptor::<$cipher>::new_from_slices(key, iv)
+                .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?
+                .decrypt_padded_mut::<block_padding::NoPadding>(&mut output[..data.len()])
+                .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
+            let pad = validate_pkcs7_ct(&output[..data.len()], $block_size)?;
+            Ok(data.len() - pad)
+        }
+        dec_mmap as MmapDecryptFn
+    }};
+}
+
+macro_rules! aead_mmap_dec {
+    ($cipher:ty, $nonce_size:expr) => {{
+        use aes_gcm::aead::{
+            generic_array::{typenum::Unsigned, GenericArray},
+            AeadCore, AeadInPlace, KeyInit,
+        };
+
+        fn dec_mmap(key: &[u8], input: &[u8], output: &mut [u8]) -> Result<usize, CryptoError> {
+            // Derive tag length from the cipher's associated type so a future
+            // AEAD with a different tag size stays correct without touching this code.
+            let tag_len = <<$cipher as AeadCore>::TagSize as Unsigned>::USIZE;
+            if key.len() != 32 {
+                return Err(CryptoError::InvalidKeyLength { expected: 32, got: key.len() });
+            }
+            if input.len() < $nonce_size + tag_len {
+                return Err(CryptoError::InvalidNonce);
+            }
+            let (nonce, rest) = input.split_at($nonce_size);
+            let ct_len = rest.len() - tag_len;
+            let (ct, tag) = rest.split_at(ct_len);
+            output[..ct_len].copy_from_slice(ct);
+            <$cipher>::new_from_slice(key)
+                .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?
+                .decrypt_in_place_detached(
+                    GenericArray::from_slice(nonce),
+                    &[],
+                    &mut output[..ct_len],
+                    GenericArray::from_slice(tag),
+                )
+                .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
+            Ok(ct_len)
+        }
+        dec_mmap as MmapDecryptFn
+    }};
+}
+
+macro_rules! cipher05_cbc_mmap_dec {
+    ($cipher:ty, $key_len:expr, $block_size:expr) => {{
+        use magma::cipher::{BlockCipherDecrypt, KeyInit};
+
+        fn dec_mmap(key: &[u8], input: &[u8], output: &mut [u8]) -> Result<usize, CryptoError> {
+            if key.len() != $key_len {
+                return Err(CryptoError::InvalidKeyLength { expected: $key_len, got: key.len() });
+            }
+            if input.len() < $block_size * 2 {
+                return Err(CryptoError::InvalidNonce);
+            }
+            let (iv, data) = input.split_at($block_size);
+            if data.is_empty() || data.len() % $block_size != 0 {
+                return Err(CryptoError::DecryptionFailed("Invalid ciphertext length".into()));
+            }
+            output[..data.len()].copy_from_slice(data);
+            let cipher = <$cipher>::new_from_slice(key)
+                .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
+            let mut prev = [0u8; $block_size];
+            prev.copy_from_slice(iv);
+            for chunk in output[..data.len()].chunks_mut($block_size) {
+                let mut ct_backup = [0u8; $block_size];
+                ct_backup.copy_from_slice(chunk);
+                let mut block = (*<&[u8; $block_size]>::try_from(&chunk[..]).unwrap()).into();
+                cipher.decrypt_block(&mut block);
+                chunk.copy_from_slice(&block);
+                for (i, b) in chunk.iter_mut().enumerate() {
+                    *b ^= prev[i];
+                }
+                prev = ct_backup;
+            }
+            let pad = validate_pkcs7_ct(&output[..data.len()], $block_size)?;
+            Ok(data.len() - pad)
+        }
+        dec_mmap as MmapDecryptFn
+    }};
+}
+
+#[allow(deprecated)]
+fn ascon_decrypt_mmap(key: &[u8], input: &[u8], output: &mut [u8]) -> Result<usize, CryptoError> {
+    use ascon_aead::{
+        aead::{AeadInPlace, KeyInit},
+        AsconAead128,
+    };
+    const KEY_LEN: usize = 16;
+    const NONCE_SIZE: usize = 16;
+    const TAG_LEN: usize = 16;
+    if input.len() < NONCE_SIZE + TAG_LEN {
+        return Err(CryptoError::InvalidNonce);
+    }
+    let key_arr: [u8; KEY_LEN] = key.try_into().map_err(|_| CryptoError::InvalidKeyLength {
+        expected: KEY_LEN,
+        got: key.len(),
+    })?;
+    let (nonce, rest) = input.split_at(NONCE_SIZE);
+    let ct_len = rest.len() - TAG_LEN;
+    let (ct, tag) = rest.split_at(ct_len);
+    let nonce_arr: [u8; NONCE_SIZE] = nonce.try_into().map_err(|_| CryptoError::InvalidNonce)?;
+    let tag_arr: [u8; TAG_LEN] = tag.try_into().map_err(|_| CryptoError::InvalidNonce)?;
+    output[..ct_len].copy_from_slice(ct);
+    AsconAead128::new(&key_arr.into())
+        .decrypt_in_place_detached(
+            &nonce_arr.into(),
+            &[],
+            &mut output[..ct_len],
+            &tag_arr.into(),
+        )
+        .map_err(|e| CryptoError::DecryptionFailed(e.to_string()))?;
+    Ok(ct_len)
+}
+
+pub(crate) fn decrypt_mmap(
+    algo: Algorithm,
+    key: &[u8],
+    input: &[u8],
+    output: &mut [u8],
+) -> Result<usize, CryptoError> {
+    let f = get_mmap_decrypt_fn(algo);
+    f(key, input, output)
+}
+
+fn get_mmap_decrypt_fn(algo: Algorithm) -> MmapDecryptFn {
+    match algo {
+        Algorithm::Aes256 => aead_mmap_dec!(aes_gcm::Aes256Gcm, 12),
+        Algorithm::ChaCha20Poly1305 => aead_mmap_dec!(chacha20poly1305::ChaCha20Poly1305, 12),
+        Algorithm::XChaCha20Poly1305 => aead_mmap_dec!(chacha20poly1305::XChaCha20Poly1305, 24),
+        Algorithm::TripleDes => cbc_mmap_dec!(des::TdesEde3, 24, 8, 8),
+        Algorithm::Twofish => cbc_mmap_dec!(twofish::Twofish, 32, 16, 16),
+        Algorithm::Serpent => cbc_mmap_dec!(serpent::Serpent, 32, 16, 16),
+        Algorithm::Camellia => cbc_mmap_dec!(camellia::Camellia256, 32, 16, 16),
+        Algorithm::Blowfish => cbc_mmap_dec!(blowfish::Blowfish, 32, 8, 8),
+        Algorithm::Cast5 => cbc_mmap_dec!(cast5::Cast5, 16, 8, 8),
+        Algorithm::Idea => cbc_mmap_dec!(idea::Idea, 16, 8, 8),
+        Algorithm::Aria => cbc_mmap_dec!(aria::Aria256, 32, 16, 16),
+        Algorithm::Sm4 => cbc_mmap_dec!(sm4::Sm4, 16, 16, 16),
+        Algorithm::Kuznyechik => cbc_mmap_dec!(kuznyechik::Kuznyechik, 32, 16, 16),
+        Algorithm::Seed => cbc_mmap_dec!(kisaseed::SEED, 16, 16, 16),
+        Algorithm::Threefish256 => cipher05_cbc_mmap_dec!(threefish::Threefish256, 32, 32),
+        Algorithm::Rc6 => cipher05_cbc_mmap_dec!(rc6::RC6_32_20_16, 16, 16),
+        Algorithm::Magma => cipher05_cbc_mmap_dec!(magma::Magma, 32, 8),
+        Algorithm::Speck128_256 => cipher05_cbc_mmap_dec!(speck_cipher::Speck128_256, 32, 16),
+        Algorithm::Gift128 => cipher05_cbc_mmap_dec!(gift_cipher::Gift128, 16, 16),
+        Algorithm::Ascon128 => ascon_decrypt_mmap,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
