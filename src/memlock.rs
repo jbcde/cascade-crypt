@@ -1,5 +1,13 @@
 //! Memory locking utilities to prevent sensitive data from being swapped to disk.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static MLOCK_FAILED: AtomicBool = AtomicBool::new(false);
+
+pub fn mlock_warning_needed() -> bool {
+    MLOCK_FAILED.load(Ordering::Relaxed)
+}
+
 /// Lock a memory region to prevent it from being swapped to disk.
 /// Returns true if successful, false if mlock is unavailable or fails.
 /// Failure is not fatal - mlock may require elevated privileges.
@@ -46,6 +54,9 @@ impl LockedVec {
     /// Create a new LockedVec, attempting to mlock the memory.
     pub fn new(data: Vec<u8>) -> Self {
         let locked = mlock(data.as_ptr(), data.len());
+        if !locked {
+            MLOCK_FAILED.store(true, Ordering::Relaxed);
+        }
         Self {
             data: zeroize::Zeroizing::new(data),
             locked,

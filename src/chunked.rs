@@ -20,8 +20,10 @@ const FRAME_PREFIX_LEN: usize = 8; // u64 LE chunk length
 const MAX_FRAME_LEN: u64 = 8 * 1024 * 1024 * 1024;
 /// Maximum header size to prevent unbounded allocation from read_until.
 const MAX_HEADER_LEN: usize = 64 * 1024;
-/// Maximum chunk count to prevent DoS from attacker-controlled headers.
-const MAX_CHUNK_COUNT: u64 = u32::MAX as u64;
+/// Maximum chunk count to prevent sustained-compute DoS from attacker-controlled
+/// headers. 2^40 (~1 trillion) covers any plausible file at any chunk size while
+/// cutting the attacker's Argon2id workload ceiling by 24 bits vs u32::MAX (K-10).
+const MAX_CHUNK_COUNT: u64 = 1 << 40;
 
 /// Check whether a file should be chunked based on available RAM.
 /// Returns `Some(chunk_size)` if the file exceeds the memory threshold, else `None`.

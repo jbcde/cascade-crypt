@@ -461,7 +461,9 @@ impl Header {
 }
 
 fn parse_header_line(data: &[u8]) -> Result<(Vec<&str>, &[u8]), HeaderError> {
-    let end = data
+    const MAX_HEADER_LINE: usize = 64 * 1024;
+    let search_limit = data.len().min(MAX_HEADER_LINE);
+    let end = data[..search_limit]
         .iter()
         .position(|&b| b == b'\n')
         .ok_or(HeaderError::InvalidFormat)?;
@@ -490,8 +492,9 @@ fn parse_hash(s: &str) -> Result<[u8; 32], HeaderError> {
 }
 
 // Argon2 parameter bounds to prevent denial-of-service from crafted headers.
-// These are generous upper limits well beyond any reasonable configuration.
-const MAX_ARGON2_M_COST: u32 = 4_194_304; // 4 GiB (in KiB)
+// m_cost is capped at 1 GiB rather than 4 GiB to limit the memory amplification
+// when Rayon derives keys for multiple cascade layers in parallel (K-9).
+const MAX_ARGON2_M_COST: u32 = 1_048_576; // 1 GiB (in KiB)
 const MAX_ARGON2_T_COST: u32 = 100;       // iterations
 const MAX_ARGON2_P_COST: u32 = 255;       // parallel lanes
 
