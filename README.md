@@ -2,7 +2,7 @@
 
 Cascading binary encryption tool with user-controlled algorithm ordering. Encrypt files through multiple layers of encryption, applied in the order you specify.
 
-> **v0.7.1 Security Fix:** Chunked encryption's HMAC key is now derived per-file from a random file salt in the header (new header versions v13/v14), closing a cross-file chunk splicing vulnerability found in v0.7.0. **v0.7.0 chunked files (v11/v12) still decrypt** — no re-encryption required. New encryptions emit v13/v14. Non-chunked files (v7/v8) are unaffected. The v0.6.1 encoder change (8-byte length prefix) also remains — files from v0.6.0 or earlier must be decrypted with the prior version first. See [CHANGELOG.md](CHANGELOG.md) for details.
+> **v0.8.0 Security Release:** Closes eight findings from two adversarial reviews. Headline fix: **non-chunked decrypt no longer OOMs on files larger than available RAM** (K-2) — large non-chunked files now route through an mmap-backed pipeline with peak memory bounded by the OS page cache, not file size. Also tightens `MAX_ARGON2_M_COST` (4 GiB → 1 GiB) and `MAX_CHUNK_COUNT` (~4B → ~1T) to block resource-exhaustion vectors; caps the non-chunked header line at 64 KiB; caps keyfile reads at 1 MiB; emits a stderr warning on silent `mlock` failure; and applies an explicit owner-only DACL to Windows keyfiles. Wire format unchanged — every file from v0.7.1+ decrypts under v0.8.0 without modification. Closed: K-1 (v0.7.1), K-2/K-4/K-6/K-8/K-9/K-10/K-12/K-13 (v0.8.0). Documentation added for K-11 (`--pubkey` does not authenticate sender) and K-15 (AES requires AES-NI for constant-time operation). See [CHANGELOG.md](CHANGELOG.md) for details.
 
 ## Features
 
@@ -271,8 +271,9 @@ cascrypt -s -d -i secret.enc -o secret.bin
 
 ## Limitations
 
-- **Non-chunked mode memory usage: ~2-3x file size** — Multi-layer encryption requires the input plus intermediate buffers. `--buffer=disk` offloads intermediate layers to temp files, but the initial read and final write remain in RAM.
-- **Chunked mode** avoids this — memory stays proportional to chunk size. Activates automatically for large files or manually with `--chunk`.
+- **Non-chunked mode memory usage for small files: ~2-3x file size** — multi-layer encryption holds the input plus intermediate buffers in RAM.
+- **Non-chunked decrypt for files larger than RAM (v0.8.0+):** automatically routes to an mmap-backed pipeline. The ciphertext body streams to a secure temp file, each cipher layer runs via memory-mapped I/O (ping-pong temp files), and the final base64 decode streams to the output. Peak physical RAM is bounded by the OS page cache — never by file size. Slower than the RAM path (disk I/O per layer) but works on files that would previously OOM. No user-visible flag; the pipeline activates when `file_size > available_memory / 2`.
+- **Chunked mode** avoids both — memory stays proportional to chunk size. Activates automatically for large files or manually with `--chunk`.
 
 ## Performance
 
